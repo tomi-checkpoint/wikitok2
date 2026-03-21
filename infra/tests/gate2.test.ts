@@ -132,29 +132,29 @@ try {
   // Setup: create test users
   console.log("Setting up test users...\n");
 
-  const timestamp = Date.now();
-  userA = await createTestAuthUser(`test_user_a_${timestamp}@wikitok.test`);
-  userB = await createTestAuthUser(`test_user_b_${timestamp}@wikitok.test`);
-  adminUser = await createTestAuthUser(`test_admin_${timestamp}@wikitok.test`);
+  const ts = String(Date.now()).slice(-8);
+  userA = await createTestAuthUser(`ta_${ts}@wikitok.test`);
+  userB = await createTestAuthUser(`tb_${ts}@wikitok.test`);
+  adminUser = await createTestAuthUser(`tadm_${ts}@wikitok.test`);
 
   // Create profiles via direct Postgres (bypass RLS)
   await pgClient.query(
     `INSERT INTO profiles (id, username, display_name)
      VALUES ($1, $2, $3)
      ON CONFLICT (id) DO NOTHING`,
-    [userA.id, `user_a_${timestamp}`, "Test User A"]
+    [userA.id, `ua_${ts}`, "Test User A"]
   );
   await pgClient.query(
     `INSERT INTO profiles (id, username, display_name)
      VALUES ($1, $2, $3)
      ON CONFLICT (id) DO NOTHING`,
-    [userB.id, `user_b_${timestamp}`, "Test User B"]
+    [userB.id, `ub_${ts}`, "Test User B"]
   );
   await pgClient.query(
     `INSERT INTO profiles (id, username, display_name, is_admin)
      VALUES ($1, $2, $3, true)
      ON CONFLICT (id) DO NOTHING`,
-    [adminUser.id, `admin_${timestamp}`, "Test Admin"]
+    [adminUser.id, `adm_${ts}`, "Test Admin"]
   );
 
   // ─── Tests ─────────────────────────────────────────────────
@@ -196,7 +196,7 @@ try {
     try {
       await pgClient.query(
         `INSERT INTO profiles (id, username) VALUES ($1, $2)`,
-        [userA.id, `user_a_${timestamp}`] // same username as userA already has
+        [userA.id, `ua_${ts}`] // same username as userA already has
       );
       throw new Error("Insert should have failed");
     } catch (err: any) {
@@ -303,7 +303,7 @@ try {
 
   // 2.10 Duplicate save
   await test("2.10 Duplicate save constraint", async () => {
-    const articleId = `test_dup_save_${timestamp}`;
+    const articleId = `test_dup_save_${ts}`;
     await pgClient.query(
       `INSERT INTO saved_articles (user_id, article_id, article_title, article_url)
        VALUES ($1, $2, 'Test', 'https://en.wikipedia.org/wiki/Test')`,
@@ -468,11 +468,12 @@ try {
   });
 
   // Re-create userB for remaining tests
-  userB = await createTestAuthUser(`test_user_b2_${timestamp}@wikitok.test`);
+  const ts2 = String(Date.now()).slice(-8);
+  userB = await createTestAuthUser(`test_b2_${ts2}@wikitok.test`);
   await pgClient.query(
     `INSERT INTO profiles (id, username, display_name)
      VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
-    [userB.id, `user_b2_${timestamp}`, "Test User B2"]
+    [userB.id, `ub2_${ts2}`, "Test User B2"]
   );
 
   // 2.20 updated_at trigger
@@ -598,7 +599,7 @@ try {
     for (let i = 0; i < 5; i++) {
       await pgClient.query(
         `INSERT INTO comments (user_id, article_id, body) VALUES ($1, $2, $3)`,
-        [userB.id, `rate_limit_${timestamp}`, `Comment ${i + 1}`]
+        [userB.id, `rate_limit_${ts}`, `Comment ${i + 1}`]
       );
     }
 
@@ -606,7 +607,7 @@ try {
     try {
       await pgClient.query(
         `INSERT INTO comments (user_id, article_id, body) VALUES ($1, $2, $3)`,
-        [userB.id, `rate_limit_${timestamp}`, "Comment 6 (should fail)"]
+        [userB.id, `rate_limit_${ts}`, "Comment 6 (should fail)"]
       );
       throw new Error("6th comment should have been rate-limited");
     } catch (err: any) {
@@ -637,11 +638,11 @@ try {
     // Create 31 fake user profiles to follow (using direct PG, with auth users)
     for (let i = 0; i < 31; i++) {
       const fakeUser = await createTestAuthUser(
-        `follow_target_${timestamp}_${i}@wikitok.test`
+        `follow_target_${ts}_${i}@wikitok.test`
       );
       await pgClient.query(
         `INSERT INTO profiles (id, username) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
-        [fakeUser.id, `ft_${timestamp}_${i}`]
+        [fakeUser.id, `ft_${ts}_${i}`]
       );
       followTargetIds.push(fakeUser.id);
     }

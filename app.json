@@ -32,8 +32,8 @@
       "expo-router"
     ],
     "extra": {
-      "supabaseUrl": "",
-      "supabaseAnonKey": ""
+      "supabaseUrl": "https://kong-production-3285.up.railway.app",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzc0MTIyNjY5LCJleHAiOjIwODk0ODI2Njl9.3D6Vwp9DJaiypw-4ch5p8JtriPRJ24leMUiW3hPjsxM"
     }
   }
 }
