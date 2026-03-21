@@ -11,13 +11,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApp } from '../../src/store/AppContext';
-
-// TODO: Replace with real user data from Supabase auth
-const PLACEHOLDER_USER = {
-  username: 'wikitok_user',
-  displayName: 'Knowledge Explorer',
-  avatar: null as string | null,
-};
+import { signOut, getCurrentProfile } from '../../src/lib/auth';
+import { useEffect, useState } from 'react';
 
 const ACCENT = '#38BDF8';
 const CARD_BG = '#1F2937';
@@ -26,6 +21,16 @@ const DANGER = '#EF4444';
 export default function ProfileScreen() {
   const router = useRouter();
   const { saved, history } = useApp();
+  const [profile, setProfile] = useState<{ username: string; display_name: string; avatar_url: string | null } | null>(null);
+
+  useEffect(() => {
+    getCurrentProfile().then(({ data }) => {
+      if (data) setProfile(data as any);
+    });
+  }, []);
+
+  const username = profile?.username || 'wikitok_user';
+  const displayName = profile?.display_name || 'Knowledge Explorer';
 
   const uniqueCategories = useMemo(() => {
     const cats = new Set<string>();
@@ -60,7 +65,12 @@ export default function ProfileScreen() {
         router.push('/edit-profile' as any);
         break;
       case 'logout':
-        Alert.alert('Log Out', 'Coming soon!');
+        Alert.alert('Log Out', 'Are you sure you want to log out?', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Log Out', style: 'destructive', onPress: async () => {
+            await signOut();
+          }},
+        ]);
         break;
       default:
         Alert.alert(item, 'Coming soon!');
@@ -88,8 +98,8 @@ export default function ProfileScreen() {
             <Ionicons name="camera" size={12} color="#fff" />
           </TouchableOpacity>
         </View>
-        <Text style={styles.username}>{PLACEHOLDER_USER.displayName}</Text>
-        <Text style={styles.handle}>@{PLACEHOLDER_USER.username}</Text>
+        <Text style={styles.username}>{displayName}</Text>
+        <Text style={styles.handle}>@{username}</Text>
         <TouchableOpacity activeOpacity={0.7}>
           <Text style={styles.viewActivity}>View activity</Text>
         </TouchableOpacity>
