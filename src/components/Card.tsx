@@ -9,6 +9,7 @@ import {
   Animated,
   PanResponder,
   Platform,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ProcessedArticle } from '../types';
@@ -17,7 +18,7 @@ import { useApp } from '../store/AppContext';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const ACCENT = '#38BDF8';
-const SWIPE_THRESHOLD = 60;
+const SWIPE_THRESHOLD = 50;
 const SWIPE_VELOCITY_THRESHOLD = 0.3;
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -42,18 +43,14 @@ const SOURCE_COLORS: Record<string, string> = {
   serendipity: '#06B6D4',
 };
 
-function formatCount(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-  return String(n);
-}
-
 interface CardProps {
   article: ProcessedArticle;
   isActive: boolean;
   onSwipeComplete?: () => void;
+  onDiveDeeper?: (article: ProcessedArticle) => void;
 }
 
-export default function Card({ article, isActive, onSwipeComplete }: CardProps) {
+export default function Card({ article, isActive, onSwipeComplete, onDiveDeeper }: CardProps) {
   const {
     saveArticle,
     unsaveArticle,
@@ -61,15 +58,14 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
     viewArticle,
     isSaved,
     recordDwell,
-    diveDeeper,
   } = useApp();
   const saved = isSaved(article.pageid);
   const dwellStart = useRef<number>(0);
   const [liked, setLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(Math.floor(Math.random() * 500) + 10);
-  const [diving, setDiving] = useState(false);
 
   const translateX = useRef(new Animated.Value(0)).current;
+  const heartScale = useRef(new Animated.Value(0)).current;
+  const dislikeScale = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (isActive) {
@@ -81,24 +77,6 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
       dwellStart.current = 0;
     }
   }, [isActive]);
-
-  const cardRotate = translateX.interpolate({
-    inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
-    outputRange: ['-8deg', '0deg', '8deg'],
-    extrapolate: 'clamp',
-  });
-
-  const likeHintOpacity = translateX.interpolate({
-    inputRange: [0, SWIPE_THRESHOLD],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
-  const dislikeHintOpacity = translateX.interpolate({
-    inputRange: [-SWIPE_THRESHOLD, 0],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
 
   const panResponder = useRef(
     PanResponder.create({
@@ -117,24 +95,19 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
         const swipedLeft = gs.dx < -SWIPE_THRESHOLD || (gs.vx < -SWIPE_VELOCITY_THRESHOLD && gs.dx < -20);
 
         if (swipedRight) {
-          Animated.timing(translateX, {
-            toValue: SCREEN_WIDTH * 1.5,
-            duration: 250,
-            useNativeDriver: true,
-          }).start(() => {
-            handleLike();
-            translateX.setValue(0);
-            if (onSwipeComplete) setTimeout(() => onSwipeComplete(), 50);
-          });
+          // Like animation - show heart then advance
+          showHeartAnimation();
+          translateX.setValue(0);
+          setLiked(true);
+          recordDwell(article, 5000);
+          if (onSwipeComplete) setTimeout(() => onSwipeComplete(), 600);
         } else if (swipedLeft) {
-          Animated.timing(translateX, {
-            toValue: -SCREEN_WIDTH * 1.5,
-            duration: 250,
-            useNativeDriver: true,
-          }).start(() => {
-            translateX.setValue(0);
+          // Dislike animation - show X then advance
+          showDislikeAnimation();
+          translateX.setValue(0);
+          setTimeout(() => {
             dislikeArticle(article);
-          });
+          }, 600);
         } else {
           Animated.spring(translateX, {
             toValue: 0,
@@ -150,10 +123,44 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
     })
   ).current;
 
+  const showHeartAnimation = () => {
+    heartScale.setValue(0);
+    Animated.sequence([
+      Animated.spring(heartScale, {
+        toValue: 1.2,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 5,
+      }),
+      Animated.timing(heartScale, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const showDislikeAnimation = () => {
+    dislikeScale.setValue(0);
+    Animated.sequence([
+      Animated.spring(dislikeScale, {
+        toValue: 1.2,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 5,
+      }),
+      Animated.timing(dislikeScale, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
   const handleLike = () => {
     if (!liked) {
       setLiked(true);
-      setLikeCount(c => c + 1);
+      showHeartAnimation();
       recordDwell(article, 5000);
     }
   };
@@ -166,13 +173,20 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
     }
   };
 
-  const handleDiveDeeper = async () => {
-    if (diving) return;
-    setDiving(true);
+  const handleDiveDeeper = () => {
+    if (onDiveDeeper) {
+      onDiveDeeper(article);
+    }
+  };
+
+  const handleShare = async () => {
+    const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(article.title)}`;
     try {
-      await diveDeeper(article);
+      await Share.share({
+        message: `Check out "${article.title}" on WikiTok!\n${url}`,
+        url: url,
+      });
     } catch (_) {}
-    finally { setDiving(false); }
   };
 
   const openArticle = () => {
@@ -181,6 +195,12 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
 
   const sourceLabel = SOURCE_LABELS[article.sourceType] ?? 'Discover';
   const sourceColor = SOURCE_COLORS[article.sourceType] ?? '#6B7280';
+
+  const cardRotate = translateX.interpolate({
+    inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
+    outputRange: ['-5deg', '0deg', '5deg'],
+    extrapolate: 'clamp',
+  });
 
   return (
     <Animated.View
@@ -207,12 +227,14 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
         ]}
       />
 
-      {/* Swipe hint overlays */}
-      <Animated.View style={[styles.swipeHint, styles.swipeHintRight, { opacity: likeHintOpacity }]} pointerEvents="none">
-        <Ionicons name="heart" size={70} color="#EF4444" />
+      {/* Center heart animation (like TikTok double-tap heart) */}
+      <Animated.View style={[styles.centerAnimation, { transform: [{ scale: heartScale }], opacity: heartScale }]} pointerEvents="none">
+        <Ionicons name="heart" size={100} color="#EF4444" />
       </Animated.View>
-      <Animated.View style={[styles.swipeHint, styles.swipeHintLeft, { opacity: dislikeHintOpacity }]} pointerEvents="none">
-        <Ionicons name="close-circle" size={70} color="#EF4444" />
+
+      {/* Center dislike animation */}
+      <Animated.View style={[styles.centerAnimation, { transform: [{ scale: dislikeScale }], opacity: dislikeScale }]} pointerEvents="none">
+        <Ionicons name="close-circle" size={100} color="#EF4444" />
       </Animated.View>
 
       {/* Source badge - top left */}
@@ -220,7 +242,7 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
         <Text style={styles.sourceBadgeText}>{sourceLabel}</Text>
       </View>
 
-      {/* ══════ TikTok-style RIGHT SIDEBAR ══════ */}
+      {/* ── TikTok-style RIGHT SIDEBAR ── */}
       <View style={styles.rightSidebar}>
         {/* Like / Heart */}
         <TouchableOpacity style={styles.sidebarItem} onPress={handleLike} activeOpacity={0.7}>
@@ -229,13 +251,11 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
             size={30}
             color={liked ? '#EF4444' : '#fff'}
           />
-          <Text style={styles.sidebarCount}>{formatCount(likeCount)}</Text>
         </TouchableOpacity>
 
         {/* Comments (opens article) */}
         <TouchableOpacity style={styles.sidebarItem} onPress={openArticle} activeOpacity={0.7}>
           <Ionicons name="chatbubble-ellipses" size={28} color="#fff" />
-          <Text style={styles.sidebarCount}>0</Text>
         </TouchableOpacity>
 
         {/* Bookmark / Save */}
@@ -249,20 +269,16 @@ export default function Card({ article, isActive, onSwipeComplete }: CardProps) 
 
         {/* Dive Deeper */}
         <TouchableOpacity style={styles.sidebarItem} onPress={handleDiveDeeper} activeOpacity={0.7}>
-          <Ionicons
-            name={diving ? 'hourglass' : 'boat-outline'}
-            size={28}
-            color={diving ? ACCENT : '#fff'}
-          />
+          <Ionicons name="boat-outline" size={28} color="#fff" />
         </TouchableOpacity>
 
         {/* Share */}
-        <TouchableOpacity style={styles.sidebarItem} onPress={() => {}} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.sidebarItem} onPress={handleShare} activeOpacity={0.7}>
           <Ionicons name="arrow-redo" size={28} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* ══════ BOTTOM CONTENT (TikTok-style left-aligned) ══════ */}
+      {/* ── BOTTOM CONTENT (TikTok-style left-aligned) ── */}
       <TouchableOpacity
         style={styles.bottomContent}
         onPress={openArticle}
@@ -296,19 +312,15 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: Platform.OS === 'web' ? 'transparent' : 'rgba(0,0,0,0.4)',
   },
-  swipeHint: {
+  centerAnimation: {
     position: 'absolute',
-    top: '35%',
-    zIndex: 20,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    borderRadius: 50,
-    padding: 16,
-  },
-  swipeHintRight: {
-    right: 40,
-  },
-  swipeHintLeft: {
-    left: 40,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 50,
   },
   sourceBadge: {
     position: 'absolute',
@@ -328,8 +340,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-
-  // ── Right sidebar (TikTok-style) ──
   rightSidebar: {
     position: 'absolute',
     right: 8,
@@ -341,17 +351,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-  sidebarCount: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-
-  // ── Bottom content (TikTok-style left-aligned) ──
   bottomContent: {
     position: 'absolute',
     bottom: TAB_BAR_HEIGHT + 16,

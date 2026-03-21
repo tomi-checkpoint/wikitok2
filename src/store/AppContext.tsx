@@ -20,6 +20,7 @@ interface AppContextValue extends AppState {
   saveArticle: (article: ProcessedArticle) => Promise<void>;
   unsaveArticle: (pageid: number) => Promise<void>;
   dislikeArticle: (article: ProcessedArticle) => Promise<void>;
+  addToHistory: (article: ProcessedArticle) => void;
   viewArticle: (article: ProcessedArticle) => void;
   closeViewer: () => void;
   setActiveTab: (tab: TabName) => void;
@@ -110,15 +111,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const viewArticle = useCallback((article: ProcessedArticle) => {
+  const addToHistory = useCallback((article: ProcessedArticle) => {
     Storage.addHistory(article);
+    setState(s => ({
+      ...s,
+      history: [article, ...s.history.filter(a => a.pageid !== article.pageid)].slice(0, 100),
+    }));
+  }, []);
+
+  const viewArticle = useCallback((article: ProcessedArticle) => {
+    addToHistory(article);
     recordInteraction(article, 'read_full');
     setState(s => ({
       ...s,
       articleViewer: article,
-      history: [article, ...s.history.filter(a => a.pageid !== article.pageid)].slice(0, 100),
     }));
-  }, []);
+  }, [addToHistory]);
 
   const closeViewer = useCallback(() => {
     setState(s => ({ ...s, articleViewer: null }));
@@ -194,6 +202,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveArticle,
         unsaveArticle,
         dislikeArticle,
+        addToHistory,
         viewArticle,
         closeViewer,
         setActiveTab,
