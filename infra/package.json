@@ -1,0 +1,22 @@
+{
+  "name": "wikitok-infra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gate1": "tsx tests/gate1.test.ts",
+    "gate2": "tsx tests/gate2.test.ts",
+    "migrate": "tsx scripts/run-migrations.ts",
+    "setup-storage": "tsx scripts/setup-storage.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "dotenv": "^16.4.0",
+    "pg": "^8.13.0",
+    "tsx": "^4.19.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "@types/ws": "^8.5.0"
+  }
+}
