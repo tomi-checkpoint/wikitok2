@@ -68,13 +68,13 @@ export default function SignupScreen() {
     setLoading(true);
     setError('');
     const result = await signUpWithEmail(email.trim(), password);
-    setLoading(false);
     if (result.error) {
+      setLoading(false);
       setError(result.error);
-    } else {
-      // Navigate to username selection after successful signup
-      router.replace('/(auth)/username');
     }
+    // On success, don't setLoading(false) — the auth state listener in _layout
+    // will detect the new session and navigate to username screen automatically.
+    // Keep the spinner showing to prevent double-tap.
   };
 
   return (

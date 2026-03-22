@@ -148,10 +148,44 @@ function isBoringArticle(article: WikiArticle): boolean {
   return BORING_PATTERNS.some(p => p.test(article.extract));
 }
 
-async function fetchJSON(url: string): Promise<any> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+// Rate limiting: max 2 concurrent requests, 200ms minimum gap
+let activeRequests = 0;
+let lastRequestTime = 0;
+const MAX_CONCURRENT = 2;
+const MIN_GAP_MS = 200;
+
+async function fetchJSON(url: string, retries = 2): Promise<any> {
+  // Wait for slot
+  while (activeRequests >= MAX_CONCURRENT) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  // Enforce minimum gap
+  const now = Date.now();
+  const gap = now - lastRequestTime;
+  if (gap < MIN_GAP_MS) {
+    await new Promise(r => setTimeout(r, MIN_GAP_MS - gap));
+  }
+
+  activeRequests++;
+  lastRequestTime = Date.now();
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'Api-User-Agent': 'WikiTokApp/1.0 (https://wikitok.app; contact@wikitok.app)',
+      },
+    });
+    if (res.status === 429 && retries > 0) {
+      // Rate limited — exponential backoff
+      activeRequests--;
+      const delay = (3 - retries) * 2000;
+      await new Promise(r => setTimeout(r, delay));
+      return fetchJSON(url, retries - 1);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  } finally {
+    activeRequests--;
+  }
 }
 
 function buildQueryURL(params: Record<string, string>): string {
@@ -252,18 +286,72 @@ export async function getArticlesByCategory(category: string, limit: number = 10
 }
 
 export async function searchArticles(query: string, limit: number = 10): Promise<WikiArticle[]> {
-  const url = buildQueryURL({
+  // Strategy 1: Standard list=search (keyword matching)
+  const listSearchURL = buildQueryURL({
     action: 'query',
     list: 'search',
     srsearch: query,
-    srlimit: '30',
+    srlimit: '20',
     srnamespace: '0',
   });
 
-  const data = await fetchJSON(url);
-  const titles = data?.query?.search?.map((s: any) => s.title) ?? [];
-  const articles = await getExtracts(titles);
-  return articles.filter(a => !isBoringArticle(a)).slice(0, limit);
+  // Strategy 2: generator=search (returns better semantic matches with extracts in one call)
+  const generatorSearchURL = buildQueryURL({
+    action: 'query',
+    generator: 'search',
+    gsrsearch: query,
+    gsrlimit: '20',
+    gsrnamespace: '0',
+    prop: 'extracts|pageimages|categories|description',
+    exintro: '1',
+    explaintext: '1',
+    piprop: 'thumbnail',
+    pithumbsize: '800',
+    pilimit: '20',
+    cllimit: '10',
+  });
+
+  const [listData, genData] = await Promise.all([
+    fetchJSON(listSearchURL).catch(() => null),
+    fetchJSON(generatorSearchURL).catch(() => null),
+  ]);
+
+  // Collect articles from generator=search (already has extracts)
+  const seenIds = new Set<number>();
+  const allArticles: WikiArticle[] = [];
+
+  const genPages = genData?.query?.pages;
+  if (genPages) {
+    for (const page of Object.values(genPages) as any[]) {
+      if (page.missing !== undefined || !page.extract) continue;
+      seenIds.add(page.pageid);
+      allArticles.push({
+        title: page.title,
+        pageid: page.pageid,
+        extract: page.extract,
+        thumbnail: page.thumbnail?.source,
+        description: page.description,
+        categories: page.categories?.map((c: any) => c.title.replace('Category:', '')),
+      });
+    }
+  }
+
+  // Collect titles from list=search that weren't in generator results
+  const listTitles = (listData?.query?.search ?? [])
+    .filter((s: any) => !seenIds.has(s.pageid))
+    .map((s: any) => s.title);
+
+  if (listTitles.length > 0) {
+    const extraArticles = await getExtracts(listTitles);
+    for (const a of extraArticles) {
+      if (!seenIds.has(a.pageid)) {
+        seenIds.add(a.pageid);
+        allArticles.push(a);
+      }
+    }
+  }
+
+  return allArticles.filter(a => !isBoringArticle(a)).slice(0, limit);
 }
 
 export async function getRelatedArticles(title: string, limit: number = 10): Promise<WikiArticle[]> {

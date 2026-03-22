@@ -11,12 +11,12 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import {
   checkUsernameAvailable,
   createProfile,
   getSession,
 } from '../../src/lib/auth';
+import { useAuthGateContext } from '../_layout';
 
 function validateUsername(value: string): string | null {
   if (value.length < 3) return 'Must be at least 3 characters';
@@ -27,7 +27,7 @@ function validateUsername(value: string): string | null {
 }
 
 export default function UsernameScreen() {
-  const router = useRouter();
+  const { recheckProfile } = useAuthGateContext();
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [checking, setChecking] = useState(false);
@@ -83,8 +83,8 @@ export default function UsernameScreen() {
     if (result.error) {
       setError(result.error);
     } else {
-      // Profile created, auth state listener in root layout will navigate to tabs
-      router.replace('/(tabs)');
+      // Profile created — tell auth gate to re-check, which will navigate to tabs
+      await recheckProfile();
     }
   };
 

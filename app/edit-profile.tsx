@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,23 +9,142 @@ import {
   Alert,
   ScrollView,
   KeyboardAvoidingView,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { supabase } from '../src/lib/supabase';
 
-// TODO: Replace with real user data from Supabase auth
 const ACCENT = '#38BDF8';
 const CARD_BG = '#1F2937';
 const BIO_MAX = 160;
 
 export default function EditProfileScreen() {
   const router = useRouter();
-  const [displayName, setDisplayName] = useState('Knowledge Explorer');
-  const [username] = useState('wikitok_user');
+  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const handleSave = () => {
-    Alert.alert('Coming soon', 'Profile editing will be available with authentication.');
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const loadProfile = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
+        if (data) {
+          setDisplayName(data.display_name || '');
+          setUsername(data.username || '');
+          setBio(data.bio || '');
+          setAvatarUrl(data.avatar_url || null);
+        }
+      }
+    } catch {
+      // ignore load errors
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ display_name: displayName, bio })
+          .eq('id', session.user.id);
+        if (error) {
+          Alert.alert('Error', 'Failed to save profile. Please try again.');
+          return;
+        }
+        Alert.alert('Saved', 'Profile updated successfully.');
+        router.back();
+      } else {
+        Alert.alert('Error', 'You must be signed in to save your profile.');
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to save profile. Please try again.');
+    }
+  };
+
+  const uploadAvatarBlob = async (blob: Blob, ext: string) => {
+    setUploading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        Alert.alert('Error', 'Not signed in.');
+        setUploading(false);
+        return;
+      }
+      const fileName = `${session.user.id}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, blob, { upsert: true, contentType: `image/${ext}` });
+      if (uploadError) {
+        Alert.alert('Upload failed', uploadError.message);
+        setUploading(false);
+        return;
+      }
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName);
+      const publicUrl = urlData.publicUrl + '?t=' + Date.now(); // cache bust
+      await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', session.user.id);
+      setAvatarUrl(publicUrl);
+    } catch {
+      Alert.alert('Error', 'Failed to upload photo.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleChangePhoto = async () => {
+    if (Platform.OS === 'web') {
+      // Web: use native file input
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = async (e: any) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const ext = file.name.split('.').pop() || 'jpg';
+        await uploadAvatarBlob(file, ext);
+      };
+      input.click();
+      return;
+    }
+    // Native: use expo-image-picker
+    try {
+      const ImagePicker = require('expo-image-picker');
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please grant camera roll access.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      const ext = asset.uri.split('.').pop() || 'jpg';
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      await uploadAvatarBlob(blob, ext);
+    } catch {
+      Alert.alert('Error', 'Failed to pick photo.');
+    }
   };
 
   const handleChangeBio = (text: string) => {
@@ -65,10 +184,19 @@ export default function EditProfileScreen() {
         {/* Avatar Section */}
         <View style={styles.avatarSection}>
           <View style={styles.avatar}>
-            <Ionicons name="person" size={40} color="#6B7280" />
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+            ) : (
+              <Ionicons name="person" size={40} color="#6B7280" />
+            )}
+            {uploading ? (
+              <View style={styles.avatarOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            ) : null}
           </View>
-          <TouchableOpacity activeOpacity={0.7} onPress={() => Alert.alert('Coming soon', 'Photo upload will be available soon.')}>
-            <Text style={styles.changePhotoText}>Change Photo</Text>
+          <TouchableOpacity activeOpacity={0.7} onPress={handleChangePhoto} disabled={uploading}>
+            <Text style={styles.changePhotoText}>{uploading ? 'Uploading...' : 'Change Photo'}</Text>
           </TouchableOpacity>
         </View>
 
@@ -181,6 +309,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  avatarOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 40,
   },
   changePhotoText: {
     color: ACCENT,

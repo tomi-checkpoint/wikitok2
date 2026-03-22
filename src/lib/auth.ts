@@ -135,6 +135,7 @@ export function onAuthStateChange(
 
 /**
  * Create a user profile in the profiles table.
+ * Uses upsert so re-attempts don't fail if a row already exists for the user.
  */
 export async function createProfile(
   userId: string,
@@ -142,14 +143,18 @@ export async function createProfile(
   displayName?: string,
 ): Promise<AuthResult> {
   try {
-    const { data, error } = await supabase.from('profiles').insert({
-      id: userId,
-      username,
-      display_name: displayName || username,
-    });
+    const { data, error } = await supabase.from('profiles').upsert(
+      {
+        id: userId,
+        username,
+        display_name: displayName || username,
+      },
+      { onConflict: 'id' },
+    );
     if (error) {
       if (error.message.includes('duplicate') || error.code === '23505') {
-        return { data: null, error: 'This username is already taken.' };
+        // Username uniqueness violation (not id)
+        return { data: null, error: 'This username is already taken. Try another.' };
       }
       return { data: null, error: friendlyError(error.message) };
     }
@@ -161,20 +166,25 @@ export async function createProfile(
 
 /**
  * Check if a username is available.
+ * If the query fails (e.g. RLS blocks reads), assume available
+ * and let the DB uniqueness constraint catch real duplicates on insert.
  */
 export async function checkUsernameAvailable(
   username: string,
 ): Promise<AuthResult<boolean>> {
   try {
-    const { data, error } = await supabase
+    const { data, error, count } = await supabase
       .from('profiles')
-      .select('id')
-      .eq('username', username)
-      .maybeSingle();
-    if (error) return { data: null, error: friendlyError(error.message) };
-    return { data: data === null, error: null };
-  } catch (err) {
-    return { data: null, error: friendlyError(err) };
+      .select('id', { count: 'exact', head: true })
+      .eq('username', username);
+    if (error) {
+      // RLS or table issue — assume available, DB constraint will catch dupes
+      return { data: true, error: null };
+    }
+    return { data: (count ?? 0) === 0, error: null };
+  } catch {
+    // Network/other error — assume available
+    return { data: true, error: null };
   }
 }
 

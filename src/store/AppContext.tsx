@@ -72,7 +72,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, loading: true }));
 
     try {
-      const newArticles = await buildFeed(state.feedConfig, articleIdsRef.current, 10);
+      // Race feed build against a 15-second timeout to avoid hanging
+      const feedPromise = buildFeed(state.feedConfig, articleIdsRef.current, 5);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Feed load timeout')), 25000)
+      );
+      const newArticles = await Promise.race([feedPromise, timeoutPromise]);
       for (const a of newArticles) articleIdsRef.current.add(a.pageid);
 
       setState(s => ({
@@ -81,7 +86,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         loading: false,
       }));
     } catch (err) {
-      console.error('Feed load error:', err);
+      // Use warn instead of error to avoid red error overlay
+      if (__DEV__) console.warn('Feed load issue:', (err as Error)?.message);
       setState(s => ({ ...s, loading: false }));
     } finally {
       loadingRef.current = false;
@@ -190,7 +196,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }));
       }
     } catch (err) {
-      console.error('Dive deeper error:', err);
+      if (__DEV__) console.warn('Dive deeper issue:', (err as Error)?.message);
     }
   }, []);
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,69 @@ import {
   TouchableOpacity,
   Image,
   Platform,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../src/store/AppContext';
 
+function AnimatedRow({ item, index, onPress }: { item: any; index: number; onPress: () => void }) {
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.spring(anim, {
+      toValue: 1,
+      delay: index * 40,
+      useNativeDriver: true,
+      tension: 80,
+      friction: 8,
+    }).start();
+  }, []);
+
+  return (
+    <Animated.View style={{ opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }] }}>
+      <TouchableOpacity style={styles.historyItem} onPress={onPress} activeOpacity={0.7}>
+        {item.thumbnail ? (
+          <Image source={{ uri: item.thumbnail }} style={styles.thumb} />
+        ) : (
+          <View style={[styles.thumb, styles.noThumb]}>
+            <Ionicons name="document-text" size={20} color="#6B7280" />
+          </View>
+        )}
+        <View style={styles.itemContent}>
+          <Text style={styles.itemTitle} numberOfLines={1}>{item.title}</Text>
+          {item.description ? (
+            <Text style={styles.itemDescription} numberOfLines={1}>{item.description}</Text>
+          ) : null}
+          <Text style={styles.itemExtract} numberOfLines={2}>{item.extract}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color="#4B5563" />
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
 export default function RecentScreen() {
   const { history, viewArticle } = useApp();
+  const headerAnim = useRef(new Animated.Value(0)).current;
 
-  // Ensure all history items have required ProcessedArticle fields
+  // Re-trigger animations on focus
+  let isFocused = true;
+  try {
+    const nav = require('@react-navigation/native');
+    isFocused = nav.useIsFocused();
+  } catch {}
+
+  useEffect(() => {
+    if (isFocused) {
+      headerAnim.setValue(0);
+      Animated.timing(headerAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isFocused]);
+
   const safeHistory = (history || []).filter(item => item && item.pageid && item.title).map(item => ({
     ...item,
     hookLines: item.hookLines || [item.extract ? item.extract.split('.')[0] + '.' : ''],
@@ -25,12 +80,12 @@ export default function RecentScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <Animated.View style={[styles.header, { opacity: headerAnim, transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) }] }]}>
         <Text style={styles.headerTitle}>Recent</Text>
         <Text style={styles.headerSubtitle}>
           {safeHistory.length} article{safeHistory.length !== 1 ? 's' : ''} viewed
         </Text>
-      </View>
+      </Animated.View>
 
       {safeHistory.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -44,28 +99,8 @@ export default function RecentScreen() {
           keyExtractor={item => String(item.pageid)}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.historyItem}
-              onPress={() => viewArticle(item)}
-              activeOpacity={0.7}
-            >
-              {item.thumbnail ? (
-                <Image source={{ uri: item.thumbnail }} style={styles.thumb} />
-              ) : (
-                <View style={[styles.thumb, styles.noThumb]}>
-                  <Ionicons name="document-text" size={20} color="#6B7280" />
-                </View>
-              )}
-              <View style={styles.itemContent}>
-                <Text style={styles.itemTitle} numberOfLines={1}>{item.title}</Text>
-                {item.description ? (
-                  <Text style={styles.itemDescription} numberOfLines={1}>{item.description}</Text>
-                ) : null}
-                <Text style={styles.itemExtract} numberOfLines={2}>{item.extract}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#4B5563" />
-            </TouchableOpacity>
+          renderItem={({ item, index }) => (
+            <AnimatedRow item={item} index={index} onPress={() => viewArticle(item)} />
           )}
         />
       )}

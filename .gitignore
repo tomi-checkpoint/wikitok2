@@ -11,3 +11,6 @@ web-build/
 .env
 infra/railway/.env
 infra/node_modules/
+admin/.env
+admin/node_modules/
+admin/dist/

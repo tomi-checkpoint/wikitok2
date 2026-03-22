@@ -106,32 +106,20 @@ const INTERESTING_KEYWORDS = [
 ];
 
 function scoreContentQuality(article: WikiArticle): number {
-  let score = 30; // lower base score — articles must earn their way up
+  let score = 40; // base score — most articles should pass
 
   const extractLen = article.extract?.length ?? 0;
 
-  // ── Strict length requirements ──
-  // We want substantial articles, not stubs
-  if (extractLen >= 800 && extractLen <= 5000) score += 20;
-  else if (extractLen >= 500) score += 12;
-  else if (extractLen >= 300) score += 4;
-  else if (extractLen < 250) score -= 30; // harsh penalty for very short
+  // Length bonus (not penalty)
+  if (extractLen >= 800) score += 15;
+  else if (extractLen >= 400) score += 10;
+  else if (extractLen >= 200) score += 5;
 
-  // ── Thumbnail is critical for visual feed ──
-  if (article.thumbnail) {
-    score += 20; // major bonus — images make the feed compelling
-  } else {
-    score -= 15; // significant penalty — no-image articles are boring in a visual feed
-  }
+  // Thumbnail bonus
+  if (article.thumbnail) score += 15;
 
-  // ── Description quality ──
-  if (article.description && article.description.length > 20) {
-    score += 8;
-  } else if (article.description && article.description.length > 5) {
-    score += 3;
-  } else {
-    score -= 10; // no description = likely low-quality or obscure
-  }
+  // Description bonus
+  if (article.description && article.description.length > 10) score += 5;
 
   // ── Category richness (well-connected articles are more interesting) ──
   const catCount = article.categories?.length ?? 0;
@@ -464,163 +452,83 @@ export async function buildFeed(
   existingIds: Set<number>,
   count: number = 10
 ): Promise<ProcessedArticle[]> {
-  const [seen, disliked, interests, saved] = await Promise.all([
-    getSeen(),
-    getDisliked(),
-    getInterests(),
-    getSaved(),
-  ]);
-
-  const excludedIds = new Set([...seen, ...disliked, ...existingIds]);
-  const session = getSession();
-
-  // Track seen titles (normalized) to avoid near-duplicate content
   const seenTitles = new Set<string>();
   const normalizeTitle = (title: string) =>
     title.toLowerCase().replace(/\s*\(.*?\)\s*/g, '').replace(/[^a-z0-9]/g, '');
 
   const isFiltered = (a: WikiArticle) => {
-    if (excludedIds.has(a.pageid)) return true;
+    if (existingIds.has(a.pageid)) return true;
     const norm = normalizeTitle(a.title);
     if (seenTitles.has(norm)) return true;
     seenTitles.add(norm);
     return false;
   };
-  const activeInterests = interests
-    .map(i => ({ ...i, weight: applyTimeDecay(i.weight, i.lastSeen) }))
-    .filter(i => i.weight > 0.5)
-    .sort((a, b) => b.weight - a.weight);
 
   let candidates: ProcessedArticle[] = [];
 
   // ── Category or Theme mode ──
   if (config.category) {
-    // Try category API first, then fallback to search for more results
-    const catArticles = await getArticlesByCategory(config.category, count * 3);
-    const searchFallback = await searchArticles(config.category.replace(/_/g, ' '), count * 2);
+    const [catArticles, searchFallback] = await Promise.all([
+      getArticlesByCategory(config.category, count * 2),
+      searchArticles(config.category.replace(/_/g, ' '), count),
+    ]);
     const allArticles = [...catArticles, ...searchFallback];
-    // Deduplicate
     const seen = new Set<number>();
-    const unique = allArticles.filter(a => {
-      if (seen.has(a.pageid)) return false;
-      seen.add(a.pageid);
-      return true;
-    });
-    const filtered = unique.filter(a => !isFiltered(a));
-    for (const article of filtered) {
-      const score = await predictEngagement(article, activeInterests);
-      candidates.push(processArticle(article, score, 'category', config.category));
+    const unique = allArticles.filter(a => { if (seen.has(a.pageid)) return false; seen.add(a.pageid); return true; });
+    for (const article of unique.filter(a => !isFiltered(a))) {
+      candidates.push(processArticle(article, scoreContentQuality(article), 'category', config.category));
     }
-    // If still not enough, add random articles to fill
     if (candidates.length < count) {
-      const random = await getRandomArticles(count * 2);
+      const random = await getRandomArticles(count);
       for (const article of random.filter(a => !isFiltered(a))) {
-        const score = await predictEngagement(article, activeInterests);
-        candidates.push(processArticle(article, score, 'random'));
+        candidates.push(processArticle(article, scoreContentQuality(article), 'random'));
       }
     }
   } else if (config.searchQuery) {
     const articles = await searchArticles(config.searchQuery, count * 3);
-    const filtered = articles.filter(a => !isFiltered(a));
-    for (const article of filtered) {
-      const score = await predictEngagement(article, activeInterests);
-      candidates.push(processArticle(article, score, 'search', undefined, config.theme));
+    for (const article of articles.filter(a => !isFiltered(a))) {
+      candidates.push(processArticle(article, scoreContentQuality(article) + 20, 'search', undefined, config.theme));
     }
-    // If search yields too few, supplement with random
     if (candidates.length < count) {
-      const random = await getRandomArticles(count * 2);
+      const random = await getRandomArticles(count);
       for (const article of random.filter(a => !isFiltered(a))) {
-        const score = await predictEngagement(article, activeInterests);
-        candidates.push(processArticle(article, score, 'random'));
+        candidates.push(processArticle(article, scoreContentQuality(article), 'random'));
       }
     }
   } else {
-    // ── Home feed: orchestrated mix ──
+    // ── Home feed: fast approach with preference learning ──
+    const { getTopCategories, getWeightedRandomCategory } = require('./preferences');
     const feedPromises: Promise<void>[] = [];
 
-    // 1. Interest-based articles (40% of feed)
-    if (activeInterests.length > 0) {
-      feedPromises.push((async () => {
-        // Pick from top interests weighted by strength
-        const totalWeight = activeInterests.reduce((s, i) => s + i.weight, 0);
-        const chosen: UserInterest[] = [];
-        for (let i = 0; i < 3; i++) {
-          let r = Math.random() * totalWeight;
-          for (const interest of activeInterests) {
-            r -= interest.weight;
-            if (r <= 0) { chosen.push(interest); break; }
-          }
-        }
-
-        for (const interest of chosen) {
-          const articles = await getArticlesByCategory(interest.category, 5);
-          for (const article of articles.filter(a => !isFiltered(a))) {
-            const score = await predictEngagement(article, activeInterests);
-            candidates.push(processArticle(article, score + 10, 'interest', interest.category));
-          }
-        }
-      })());
-    }
-
-    // 2. Related articles from saved (20% of feed)
-    if (saved.length > 0) {
-      feedPromises.push((async () => {
-        const randomSaved = saved[Math.floor(Math.random() * Math.min(saved.length, 10))];
-        const articles = await getRelatedArticles(randomSaved.title, 5);
-        for (const article of articles.filter(a => !isFiltered(a))) {
-          const score = await predictEngagement(article, activeInterests);
-          candidates.push(processArticle(article, score + 5, 'related'));
-        }
-      })());
-    }
-
-    // 3. Trending/most-read articles (15% of feed)
+    // 1. Random articles (always — fast, single API call)
     feedPromises.push((async () => {
-      const trending = await getMostReadArticles(8);
-      for (const article of trending.filter(a => !isFiltered(a))) {
-        const score = await predictEngagement(article, activeInterests);
-        candidates.push(processArticle(article, score + 8, 'trending'));
-      }
-    })());
-
-    // 4. Bridge articles (10% of feed)
-    if (activeInterests.length >= 2) {
-      feedPromises.push((async () => {
-        const bridges = await findBridgeArticles(activeInterests, 3);
-        for (const article of bridges.filter(a => !isFiltered(a))) {
-          const score = await predictEngagement(article, activeInterests);
-          candidates.push(processArticle(article, score + 12, 'bridge'));
-        }
-      })());
-    }
-
-    // 5. Serendipity articles (10% of feed)
-    feedPromises.push((async () => {
-      const serendipitous = await getSerendipitousArticles(activeInterests, 3);
-      for (const article of serendipitous.filter(a => !isFiltered(a))) {
-        const score = await predictEngagement(article, activeInterests);
-        candidates.push(processArticle(article, score + 3, 'serendipity'));
-      }
-    })());
-
-    // 6. Random discovery (fills remaining)
-    feedPromises.push((async () => {
-      const random = await getRandomArticles(count);
+      const random = await getRandomArticles(count * 3);
       for (const article of random.filter(a => !isFiltered(a))) {
         const score = scoreContentQuality(article);
         candidates.push(processArticle(article, score, 'random'));
       }
     })());
 
-    // 7. Spaced repetition resurface
+    // 2. Trending/most-read (single API call)
     feedPromises.push((async () => {
-      const spacedRep = await getSpacedRepetitionArticles(2);
-      for (const article of spacedRep) {
-        if (!isFiltered(article)) {
-          candidates.push({ ...article, score: article.score + 15, sourceType: 'related' });
-        }
+      const trending = await getMostReadArticles(count);
+      for (const article of trending.filter(a => !isFiltered(a))) {
+        const score = scoreContentQuality(article) + 8;
+        candidates.push(processArticle(article, score, 'trending'));
       }
     })());
+
+    // 3. Preference-based (only if user has liked enough articles)
+    const preferredCategory = getWeightedRandomCategory();
+    if (preferredCategory) {
+      feedPromises.push((async () => {
+        const articles = await getArticlesByCategory(preferredCategory, count);
+        for (const article of articles.filter(a => !isFiltered(a))) {
+          const score = scoreContentQuality(article) + 15; // boost preferred
+          candidates.push(processArticle(article, score, 'interest', preferredCategory));
+        }
+      })());
+    }
 
     await Promise.all(feedPromises);
   }
@@ -653,7 +561,7 @@ export async function buildFeed(
 
   // ── Minimum quality threshold ──
   // Don't surface articles below this score — they aren't "amazing" enough
-  const MIN_QUALITY_SCORE = config.category || config.searchQuery ? 30 : 45;
+  const MIN_QUALITY_SCORE = config.category || config.searchQuery ? 15 : 20;
   candidates = candidates.filter(c => c.score >= MIN_QUALITY_SCORE);
 
   // Sort by score with slight randomization to prevent staleness
@@ -664,18 +572,14 @@ export async function buildFeed(
   });
 
   // Apply diversity filter
+  const session = getSession();
   const diverse = enforceDiversity(candidates, session);
 
   // Take requested count
   const result = diverse.slice(0, count);
 
-  // Update session tracking
+  // Update session tracking (lightweight, in-memory)
   updateSession(result.map(a => a.category ?? 'unknown'));
-
-  // Mark as seen
-  for (const article of result) {
-    await addSeen(article.pageid);
-  }
 
   return result;
 }

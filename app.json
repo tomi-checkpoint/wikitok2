@@ -14,14 +14,27 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.wikitok.app"
+      "bundleIdentifier": "com.wikitok.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "WikiTok uses your photo library to set your profile picture"
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+          }
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.wikitok.app"
+      "package": "com.wikitok.app",
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",

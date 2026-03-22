@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { signInWithEmail, signInWithOAuth } from '../../src/lib/auth';
+import { signInWithEmail } from '../../src/lib/auth';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -37,45 +37,7 @@ export default function LoginScreen() {
     // On success, auth state change in root layout will handle navigation
   };
 
-  const handleOAuth = async (provider: 'apple' | 'google' | 'github') => {
-    setError('');
-    const result = await signInWithOAuth(provider);
-    if (result.error) {
-      setError(result.error);
-    }
-  };
-
-  const socialButtons: {
-    label: string;
-    provider: 'apple' | 'google' | 'github';
-    icon: keyof typeof Ionicons.glyphMap;
-    bg: string;
-    text: string;
-    borderColor?: string;
-  }[] = [
-    {
-      label: 'Continue with Apple',
-      provider: 'apple',
-      icon: 'logo-apple',
-      bg: '#000',
-      text: '#fff',
-      borderColor: '#333',
-    },
-    {
-      label: 'Continue with Google',
-      provider: 'google',
-      icon: 'logo-google',
-      bg: '#fff',
-      text: '#1F2937',
-    },
-    {
-      label: 'Continue with GitHub',
-      provider: 'github',
-      icon: 'logo-github',
-      bg: '#1F2937',
-      text: '#fff',
-    },
-  ];
+  // OAuth providers removed — requires developer app credentials to be configured
 
   return (
     <KeyboardAvoidingView
@@ -94,42 +56,6 @@ export default function LoginScreen() {
             <Text style={styles.logoText}>WikiTok</Text>
           </View>
           <Text style={styles.tagline}>Discover the world's knowledge</Text>
-        </View>
-
-        {/* Social Login Buttons */}
-        <View style={styles.socialContainer}>
-          {socialButtons.map((btn) => (
-            <TouchableOpacity
-              key={btn.provider}
-              style={[
-                styles.socialButton,
-                {
-                  backgroundColor: btn.bg,
-                  borderColor: btn.borderColor || 'transparent',
-                  borderWidth: btn.borderColor ? 1 : 0,
-                },
-              ]}
-              onPress={() => handleOAuth(btn.provider)}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name={btn.icon}
-                size={20}
-                color={btn.text}
-                style={styles.socialIcon}
-              />
-              <Text style={[styles.socialButtonText, { color: btn.text }]}>
-                {btn.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Divider */}
-        <View style={styles.dividerContainer}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
         </View>
 
         {/* Email & Password */}

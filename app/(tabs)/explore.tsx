@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -75,13 +75,14 @@ const CATEGORY_COLORS = [
   '#DB2777', '#059669', '#DC2626', '#2563EB', '#9333EA',
 ];
 
-function AnimatedCard({ item, index, onPress }: { item: typeof CATEGORIES[0]; index: number; onPress: () => void }) {
+function AnimatedCard({ item, index, onPress, animKey }: { item: typeof CATEGORIES[0]; index: number; onPress: () => void; animKey: number }) {
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
   const color = CATEGORY_COLORS[index % CATEGORY_COLORS.length];
   const iconName = ICON_MAP[item.icon] ?? 'ellipse';
 
   useEffect(() => {
+    scaleAnim.setValue(0);
     Animated.spring(scaleAnim, {
       toValue: 1,
       delay: index * 30,
@@ -89,7 +90,7 @@ function AnimatedCard({ item, index, onPress }: { item: typeof CATEGORIES[0]; in
       tension: 80,
       friction: 8,
     }).start();
-  }, []);
+  }, [animKey]);
 
   const handlePressIn = () => {
     Animated.spring(pressScale, {
@@ -139,16 +140,24 @@ function AnimatedCard({ item, index, onPress }: { item: typeof CATEGORIES[0]; in
 export default function ExploreScreen() {
   const { setFeedConfig } = useApp();
   const [search, setSearch] = useState('');
+  const [animKey, setAnimKey] = useState(0);
   const router = useRouter();
   const headerAnim = useRef(new Animated.Value(0)).current;
 
+  // Re-trigger animations every time tab is focused
+  const { useIsFocused } = require('@react-navigation/native');
+  const isFocused = useIsFocused();
   useEffect(() => {
-    Animated.timing(headerAnim, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  }, []);
+    if (isFocused) {
+      setAnimKey(k => k + 1);
+      headerAnim.setValue(0);
+      Animated.timing(headerAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isFocused]);
 
   const filteredCategories = search
     ? CATEGORIES.filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
@@ -205,6 +214,7 @@ export default function ExploreScreen() {
           <AnimatedCard
             item={item}
             index={index}
+            animKey={animKey}
             onPress={() => handleCategoryPress(item.wikiCat, item.name)}
           />
         )}

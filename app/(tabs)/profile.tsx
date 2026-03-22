@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,17 @@ import {
   TouchableOpacity,
   Platform,
   Alert,
+  Share,
+  Image,
+  ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApp } from '../../src/store/AppContext';
 import { signOut, getCurrentProfile } from '../../src/lib/auth';
+import { supabase } from '../../src/lib/supabase';
+import { useTheme } from '../../src/store/ThemeContext';
 import { useEffect, useState } from 'react';
 
 const ACCENT = '#38BDF8';
@@ -21,16 +27,44 @@ const DANGER = '#EF4444';
 export default function ProfileScreen() {
   const router = useRouter();
   const { saved, history } = useApp();
+  const { mode, setMode } = useTheme();
   const [profile, setProfile] = useState<{ username: string; display_name: string; avatar_url: string | null } | null>(null);
+  const [email, setEmail] = useState('');
+  const [profileLoading, setProfileLoading] = useState(true);
 
   useEffect(() => {
-    getCurrentProfile().then(({ data }) => {
-      if (data) setProfile(data as any);
-    });
+    Promise.all([
+      getCurrentProfile(),
+      supabase.auth.getSession(),
+    ]).then(([profileResult, sessionResult]) => {
+      if (profileResult.data) setProfile(profileResult.data as any);
+      if (sessionResult.data?.session?.user?.email) setEmail(sessionResult.data.session.user.email);
+    }).finally(() => setProfileLoading(false));
   }, []);
 
-  const username = profile?.username || 'wikitok_user';
-  const displayName = profile?.display_name || 'Knowledge Explorer';
+  const username = profile?.username || '';
+  const displayName = profile?.display_name || '';
+
+  // Entrance animations
+  const heroAnim = useRef(new Animated.Value(0)).current;
+  const statsAnim = useRef(new Animated.Value(0)).current;
+  const actionsAnim = useRef(new Animated.Value(0)).current;
+  const settingsAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!profileLoading) {
+      heroAnim.setValue(0);
+      statsAnim.setValue(0);
+      actionsAnim.setValue(0);
+      settingsAnim.setValue(0);
+      Animated.stagger(100, [
+        Animated.spring(heroAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 8 }),
+        Animated.spring(statsAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 8 }),
+        Animated.spring(actionsAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 8 }),
+        Animated.spring(settingsAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 8 }),
+      ]).start();
+    }
+  }, [profileLoading]);
 
   const uniqueCategories = useMemo(() => {
     const cats = new Set<string>();
@@ -51,10 +85,13 @@ export default function ProfileScreen() {
         router.push('/(tabs)/recent' as any);
         break;
       case 'interests':
-        Alert.alert('Interests', `You have explored ${uniqueCategories} unique categories.`);
+        router.push('/(tabs)/explore' as any);
         break;
       case 'share':
-        Alert.alert('Share Profile', 'Coming soon!');
+        Share.share({
+          message: `Check out @${username} on WikiTok!`,
+          url: 'https://wikitok.app',
+        }).catch(() => {});
         break;
     }
   };
@@ -64,19 +101,54 @@ export default function ProfileScreen() {
       case 'edit':
         router.push('/edit-profile' as any);
         break;
-      case 'logout':
-        Alert.alert('Log Out', 'Are you sure you want to log out?', [
+      case 'Notifications':
+        router.push('/notification-settings' as any);
+        break;
+      case 'Privacy':
+        router.push('/privacy-settings' as any);
+        break;
+      case 'Theme': {
+        Alert.alert('Theme', `Current: ${mode}`, [
+          { text: 'System Default', onPress: () => setMode('system') },
+          { text: 'Dark', onPress: () => setMode('dark') },
+          { text: 'Light', onPress: () => setMode('light') },
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Log Out', style: 'destructive', onPress: async () => {
-            await signOut();
-          }},
         ]);
         break;
+      }
+      case 'About WikiTok':
+        router.push('/about' as any);
+        break;
+      case 'logout': {
+        const doLogout = async () => {
+          try { await signOut(); } catch {}
+          router.replace('/(auth)/login' as any);
+        };
+        if (Platform.OS === 'web') {
+          if (window.confirm('Are you sure you want to log out?')) {
+            doLogout();
+          }
+        } else {
+          Alert.alert('Log Out', 'Are you sure you want to log out?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Log Out', style: 'destructive', onPress: doLogout },
+          ]);
+        }
+        break;
+      }
       default:
         Alert.alert(item, 'Coming soon!');
         break;
     }
   };
+
+  if (profileLoading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={ACCENT} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView
@@ -85,10 +157,14 @@ export default function ProfileScreen() {
       showsVerticalScrollIndicator={false}
     >
       {/* Hero Section */}
-      <View style={styles.heroSection}>
+      <Animated.View style={[styles.heroSection, { opacity: heroAnim, transform: [{ translateY: heroAnim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) }] }]}>
         <View style={styles.avatarContainer}>
           <View style={styles.avatar}>
-            <Ionicons name="person" size={40} color="#6B7280" />
+            {profile?.avatar_url ? (
+              <Image source={{ uri: profile.avatar_url }} style={styles.avatarImage} />
+            ) : (
+              <Ionicons name="person" size={40} color="#6B7280" />
+            )}
           </View>
           <TouchableOpacity
             style={styles.avatarEditBadge}
@@ -100,13 +176,14 @@ export default function ProfileScreen() {
         </View>
         <Text style={styles.username}>{displayName}</Text>
         <Text style={styles.handle}>@{username}</Text>
-        <TouchableOpacity activeOpacity={0.7}>
+        {email ? <Text style={styles.emailText}>{email}</Text> : null}
+        <TouchableOpacity activeOpacity={0.7} onPress={() => router.push('/(tabs)/recent' as any)}>
           <Text style={styles.viewActivity}>View activity</Text>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
 
       {/* Stats Row */}
-      <View style={styles.statsRow}>
+      <Animated.View style={[styles.statsRow, { opacity: statsAnim, transform: [{ scale: statsAnim }] }]}>
         <View style={styles.statItem}>
           <Text style={styles.statNumber}>{history.length}</Text>
           <Text style={styles.statLabel}>Articles Read</Text>
@@ -121,10 +198,10 @@ export default function ProfileScreen() {
           <Text style={styles.statNumber}>{uniqueCategories}</Text>
           <Text style={styles.statLabel}>Interests</Text>
         </View>
-      </View>
+      </Animated.View>
 
       {/* Quick Actions */}
-      <View style={styles.quickActionsGrid}>
+      <Animated.View style={[styles.quickActionsGrid, { opacity: actionsAnim, transform: [{ translateY: actionsAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }]}>
         <View style={styles.quickActionsRow}>
           <TouchableOpacity
             style={styles.quickActionCard}
@@ -164,11 +241,13 @@ export default function ProfileScreen() {
             <Text style={styles.quickActionLabel}>Share{'\n'}Profile</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
 
       {/* Account Settings */}
-      <Text style={styles.sectionHeader}>Account Settings</Text>
-      <View style={styles.settingsCard}>
+      <Animated.View style={{ opacity: settingsAnim, transform: [{ translateY: settingsAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }}>
+        <Text style={styles.sectionHeader}>Account Settings</Text>
+      </Animated.View>
+      <Animated.View style={[styles.settingsCard, { opacity: settingsAnim, transform: [{ translateY: settingsAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }] }]}>
         <SettingsItem
           icon="person"
           label="Edit Profile"
@@ -205,7 +284,7 @@ export default function ProfileScreen() {
           onPress={() => handleSettingsItem('logout')}
           danger
         />
-      </View>
+      </Animated.View>
 
       {/* Version */}
       <Text style={styles.versionText}>WikiTok v1.0.0</Text>
@@ -278,6 +357,12 @@ const styles = StyleSheet.create({
     backgroundColor: CARD_BG,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
   },
   avatarEditBadge: {
     position: 'absolute',
@@ -302,6 +387,11 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     fontSize: 14,
     marginTop: 2,
+  },
+  emailText: {
+    color: '#6B7280',
+    fontSize: 12,
+    marginTop: 4,
   },
   viewActivity: {
     color: ACCENT,
