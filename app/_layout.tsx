@@ -14,9 +14,10 @@ const ACCENT = '#38BDF8';
 
 type AuthState = 'loading' | 'unauthenticated' | 'needs_profile' | 'authenticated';
 
-// Context to expose recheckProfile to auth screens
-const AuthGateContext = createContext<{ recheckProfile: () => Promise<void> }>({
+// Context to expose recheckProfile and skipAuth to auth screens
+const AuthGateContext = createContext<{ recheckProfile: () => Promise<void>; skipAuth: () => void }>({
   recheckProfile: async () => {},
+  skipAuth: () => {},
 });
 export function useAuthGateContext() {
   return useContext(AuthGateContext);
@@ -133,12 +134,16 @@ function useAuthGate() {
     }
   }, []);
 
-  return { authState, session, recheckProfile };
+  const skipAuth = useCallback(() => {
+    setAuthStateTracked('authenticated');
+  }, []);
+
+  return { authState, session, recheckProfile, skipAuth };
 }
 
 function RootContent() {
   const { articleViewer, closeViewer } = useApp();
-  const { authState, recheckProfile } = useAuthGate();
+  const { authState, recheckProfile, skipAuth } = useAuthGate();
   const segments = useSegments();
   const router = useRouter();
 
@@ -167,7 +172,7 @@ function RootContent() {
   }
 
   return (
-    <AuthGateContext.Provider value={{ recheckProfile }}>
+    <AuthGateContext.Provider value={{ recheckProfile, skipAuth }}>
       <View style={styles.root}>
         <StatusBar style="light" />
         <Stack screenOptions={{ headerShown: false }}>

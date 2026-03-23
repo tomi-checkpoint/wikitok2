@@ -13,9 +13,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { signInWithEmail } from '../../src/lib/auth';
+import { useAuthGateContext } from '../_layout';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { skipAuth } = useAuthGateContext();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -119,7 +121,7 @@ export default function LoginScreen() {
             <Text style={styles.footerLinkSecondary}>Forgot Password?</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => router.replace('/(tabs)')}
+            onPress={skipAuth}
             style={styles.skipButton}
           >
             <Text style={styles.skipButtonText}>Continue without account</Text>
