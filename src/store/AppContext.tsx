@@ -121,6 +121,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const addToHistory = useCallback((article: ProcessedArticle) => {
     Storage.addHistory(article);
+    Storage.addSeen(article.pageid); // Mark as seen so it never appears again
+    articleIdsRef.current.add(article.pageid); // Also track in-session
     setState(s => ({
       ...s,
       history: [article, ...s.history.filter(a => a.pageid !== article.pageid)].slice(0, 100),

@@ -109,7 +109,7 @@ export async function getSeen(): Promise<number[]> {
 export async function addSeen(pageid: number): Promise<void> {
   const seen = await getSeen();
   if (!seen.includes(pageid)) {
-    const updated = [pageid, ...seen].slice(0, 500);
+    const updated = [pageid, ...seen].slice(0, 5000);
     cache.seen = updated;
     persistKey(KEYS.SEEN, updated);
   }

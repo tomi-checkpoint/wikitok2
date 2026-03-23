@@ -180,7 +180,7 @@ export default function TodayScreen() {
       {/* Static sidebar */}
       {currentArticle ? (
         <View style={styles.staticSidebar} pointerEvents="box-none">
-          <TouchableOpacity style={styles.sidebarItem} onPress={() => { if (!liked) { setLiked(true); recordDwell(currentArticle, 5000); if (currentArticle.categories) recordLike(currentArticle.categories); } }} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.sidebarItem} onPress={() => { if (!liked) { setLiked(true); recordDwell(currentArticle, 5000); if (currentArticle.categories) recordLike(currentArticle.categories); setTimeout(() => scrollToNext(activeIndex), 400); } }} activeOpacity={0.7}>
             <Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#EF4444' : '#fff'} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.sidebarItem} onPress={() => { if (currentSaved) unsaveArticle(currentArticle.pageid); else saveArticle(currentArticle); }} activeOpacity={0.7}>

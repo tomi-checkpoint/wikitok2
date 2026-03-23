@@ -312,6 +312,8 @@ export default function FeedScreen() {
             if (currentArticle.categories) {
               recordLike(currentArticle.categories);
             }
+            // Advance to next article after a brief moment
+            setTimeout(() => scrollToNext(activeIndex), 400);
           }
         };
         const handleSidebarSave = () => {

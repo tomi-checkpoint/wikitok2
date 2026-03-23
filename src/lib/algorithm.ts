@@ -437,11 +437,16 @@ export async function buildFeed(
 ): Promise<ProcessedArticle[]> {
   const seenTitles = new Set<string>();
 
+  // Load persisted seen + disliked IDs so we never show previously viewed articles
+  const [persistedSeen, persistedDisliked] = await Promise.all([getSeen(), getDisliked()]);
+  const allSeen = new Set([...existingIds, ...persistedSeen, ...persistedDisliked]);
+
   const isFiltered = (a: WikiArticle) => {
-    if (existingIds.has(a.pageid)) return true;
+    if (allSeen.has(a.pageid)) return true;
     const norm = normalizeTitle(a.title);
     if (seenTitles.has(norm)) return true;
     seenTitles.add(norm);
+    allSeen.add(a.pageid); // prevent dupes within this batch too
     return false;
   };
 
