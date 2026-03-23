@@ -118,6 +118,12 @@ export default function LoginScreen() {
           >
             <Text style={styles.footerLinkSecondary}>Forgot Password?</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.replace('/(tabs)')}
+            style={styles.skipButton}
+          >
+            <Text style={styles.skipButtonText}>Continue without account</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -251,5 +257,18 @@ const styles = StyleSheet.create({
   footerLinkSecondary: {
     fontSize: 14,
     color: '#9CA3AF',
+  },
+  skipButton: {
+    marginTop: 32,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  skipButtonText: {
+    fontSize: 15,
+    color: '#6B7280',
+    fontWeight: '500',
   },
 });
