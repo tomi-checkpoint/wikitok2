@@ -24,7 +24,7 @@ const ACCENT = '#38BDF8';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function TodayScreen() {
-  const { addToHistory, diveDeeper, saveArticle, unsaveArticle, isSaved, viewArticle, recordDwell, dislikeArticle } = useApp();
+  const { addToHistory, diveDeeper, loadMoreDiveArticles, saveArticle, unsaveArticle, isSaved, viewArticle, recordDwell, dislikeArticle } = useApp();
   const [articles, setArticles] = useState<ProcessedArticle[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -104,6 +104,19 @@ export default function TodayScreen() {
       try { flatListRef.current.scrollToIndex({ index: nextIndex, animated: true }); } catch (_) {}
     }
   }, []);
+
+  // Auto-load more dive articles when approaching end during a dive
+  useEffect(() => {
+    if (!diveActive) return;
+    const remaining = articles.length - activeIndex;
+    if (remaining <= 3 && remaining > 0) {
+      loadMoreDiveArticles().then(more => {
+        if (more.length > 0) {
+          setArticles(prev => prev.concat(more));
+        }
+      });
+    }
+  }, [activeIndex, articles.length, diveActive, loadMoreDiveArticles]);
 
   const renderItem = useCallback(
     ({ item, index }: { item: ProcessedArticle; index: number }) => (

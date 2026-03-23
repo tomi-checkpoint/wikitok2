@@ -29,7 +29,8 @@ interface AppContextValue extends AppState {
   shareArticle: (article: ProcessedArticle) => Promise<void>;
   isSaved: (pageid: number) => boolean;
   resetFeed: () => void;
-  diveDeeper: (article: ProcessedArticle) => void;
+  diveDeeper: (article: ProcessedArticle) => Promise<ProcessedArticle[]>;
+  loadMoreDiveArticles: () => Promise<ProcessedArticle[]>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -167,21 +168,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, articles: [], feedConfig: {} }));
   }, []);
 
-  const diveDeeper = useCallback(async (article: ProcessedArticle) => {
+  // ── Deep Dive Engine ──
+  // Maintains a local exploration cache that follows Wikipedia's link graph recursively.
+  // When user activates deep dive on an article, it:
+  // 1. Fetches related articles + links from that article
+  // 2. Stores unexplored titles in a queue for recursive expansion
+  // 3. When running low, automatically explores the next title in the queue
+  const diveQueueRef = useRef<string[]>([]); // titles to explore next
+  const diveSeenRef = useRef(new Set<string>()); // titles already explored
+  const diveCacheRef = useRef<ProcessedArticle[]>([]); // pre-fetched articles ready to serve
+
+  const fetchDiveArticles = useCallback(async (title: string): Promise<ProcessedArticle[]> => {
+    if (diveSeenRef.current.has(title)) return [];
+    diveSeenRef.current.add(title);
+
     try {
       const results = await Promise.allSettled([
-        getRelatedArticles(article.title, 8),
-        getArticleLinks(article.title, 8),
+        getRelatedArticles(title, 10),
+        getArticleLinks(title, 10),
       ]);
       const related = results[0].status === 'fulfilled' ? results[0].value : [];
       const linked = results[1].status === 'fulfilled' ? results[1].value : [];
       const all = [...related, ...linked];
-      const unique = all.filter((a, i) =>
-        a.extract &&
-        a.extract.length > 100 &&
-        all.findIndex(b => b.pageid === a.pageid) === i &&
-        !articleIdsRef.current.has(a.pageid)
-      );
+
+      // Deduplicate and filter
+      const seenIds = new Set<number>();
+      const unique = all.filter(a => {
+        if (!a.extract || a.extract.length < 100) return false;
+        if (seenIds.has(a.pageid) || articleIdsRef.current.has(a.pageid)) return false;
+        seenIds.add(a.pageid);
+        return true;
+      });
+
+      // Add unexplored titles to the queue for recursive expansion
+      for (const a of unique) {
+        if (!diveSeenRef.current.has(a.title) && !diveQueueRef.current.includes(a.title)) {
+          diveQueueRef.current.push(a.title);
+        }
+      }
+
       const processed: ProcessedArticle[] = unique.map(a => ({
         ...a,
         hookLines: [a.extract.split('.')[0] + '.'],
@@ -189,17 +214,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         sourceType: 'related' as const,
         timestamp: new Date().toISOString(),
       }));
+
       for (const a of processed) articleIdsRef.current.add(a.pageid);
-      if (processed.length > 0) {
-        setState(s => ({
-          ...s,
-          articles: s.articles.concat(processed),
-        }));
-      }
+      return processed;
     } catch (err) {
-      if (__DEV__) console.warn('Dive deeper issue:', (err as Error)?.message);
+      if (__DEV__) console.warn('Dive fetch issue:', (err as Error)?.message);
+      return [];
     }
   }, []);
+
+  const diveDeeper = useCallback(async (article: ProcessedArticle): Promise<ProcessedArticle[]> => {
+    // Reset dive state for new dive
+    diveQueueRef.current = [];
+    diveSeenRef.current.clear();
+    diveCacheRef.current = [];
+
+    // Seed the queue with the origin article's title
+    const articles = await fetchDiveArticles(article.title);
+
+    // Cache extras beyond first batch
+    if (articles.length > 5) {
+      diveCacheRef.current = articles.slice(5);
+      const firstBatch = articles.slice(0, 5);
+      setState(s => ({ ...s, articles: s.articles.concat(firstBatch) }));
+
+      // Pre-fetch from first queued title in background
+      if (diveQueueRef.current.length > 0) {
+        const nextTitle = diveQueueRef.current.shift()!;
+        fetchDiveArticles(nextTitle).then(more => {
+          diveCacheRef.current = diveCacheRef.current.concat(more);
+        });
+      }
+
+      return firstBatch;
+    }
+
+    if (articles.length > 0) {
+      setState(s => ({ ...s, articles: s.articles.concat(articles) }));
+    }
+    return articles;
+  }, [fetchDiveArticles]);
+
+  const loadMoreDiveArticles = useCallback(async (): Promise<ProcessedArticle[]> => {
+    // First, serve from cache
+    if (diveCacheRef.current.length > 0) {
+      const batch = diveCacheRef.current.splice(0, 5);
+      setState(s => ({ ...s, articles: s.articles.concat(batch) }));
+
+      // Pre-fetch more in background if cache is running low
+      if (diveCacheRef.current.length < 3 && diveQueueRef.current.length > 0) {
+        const nextTitle = diveQueueRef.current.shift()!;
+        fetchDiveArticles(nextTitle).then(more => {
+          diveCacheRef.current = diveCacheRef.current.concat(more);
+        });
+      }
+
+      return batch;
+    }
+
+    // Cache empty — fetch from next title in queue
+    if (diveQueueRef.current.length > 0) {
+      const nextTitle = diveQueueRef.current.shift()!;
+      const articles = await fetchDiveArticles(nextTitle);
+      if (articles.length > 0) {
+        setState(s => ({ ...s, articles: s.articles.concat(articles) }));
+      }
+      return articles;
+    }
+
+    return [];
+  }, [fetchDiveArticles]);
 
   // Memoize context value to prevent all consumers re-rendering on every state change
   const contextValue = useMemo(() => ({
@@ -218,7 +302,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isSaved,
     resetFeed,
     diveDeeper,
-  }), [state, loadMore, saveArticle, unsaveArticle, dislikeArticle, addToHistory, viewArticle, closeViewer, setActiveTab, setFeedConfig, recordDwell, shareArticle, isSaved, resetFeed, diveDeeper]);
+    loadMoreDiveArticles,
+  }), [state, loadMore, saveArticle, unsaveArticle, dislikeArticle, addToHistory, viewArticle, closeViewer, setActiveTab, setFeedConfig, recordDwell, shareArticle, isSaved, resetFeed, diveDeeper, loadMoreDiveArticles]);
 
   return (
     <AppContext.Provider value={contextValue}>

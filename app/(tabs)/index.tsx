@@ -32,6 +32,7 @@ export default function FeedScreen() {
     feedConfig,
     resetFeed,
     diveDeeper,
+    loadMoreDiveArticles,
     addToHistory,
     saveArticle,
     unsaveArticle,
@@ -44,6 +45,8 @@ export default function FeedScreen() {
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [themeModalVisible, setThemeModalVisible] = useState(false);
+  const [diveLoading, setDiveLoading] = useState(false);
+  const boatBob = useRef(new Animated.Value(0)).current;
   const isFocused = useIsFocused();
 
   // Close modal when navigating away from Feed tab
@@ -131,6 +134,7 @@ export default function FeedScreen() {
       // Toggle OFF — deactivate dive mode
       setDiveActive(false);
       setDiveCount(0);
+      setDiveLoading(false);
       setDiveBanner('Dive ended');
       diveBannerOpacity.setValue(0);
       Animated.sequence([
@@ -141,25 +145,53 @@ export default function FeedScreen() {
       return;
     }
 
-    // Toggle ON — activate dive mode
+    // Toggle ON — activate dive mode with boat animation
     setDiveActive(true);
     setDiveCount(0);
+    setDiveLoading(true);
+
+    // Start boat bobbing animation
+    const bobLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(boatBob, { toValue: -8, duration: 600, useNativeDriver: true }),
+        Animated.timing(boatBob, { toValue: 8, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    bobLoop.start();
+
     const topic = article.title;
     setDiveBanner(`Diving into: ${topic}`);
     diveBannerOpacity.setValue(0);
+    Animated.timing(diveBannerOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+
+    // Fetch first batch of related articles
+    const results = await diveDeeper(article);
+    setDiveLoading(false);
+    bobLoop.stop();
+    boatBob.setValue(0);
+
+    // Fade banner after articles load
     Animated.sequence([
-      Animated.timing(diveBannerOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
-      Animated.delay(1500),
+      Animated.delay(800),
       Animated.timing(diveBannerOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]).start(() => setDiveBanner(null));
 
-    await diveDeeper(article);
-
-    const currentIndex = articlesRef.current.findIndex(a => a.pageid === article.pageid);
-    if (currentIndex >= 0) {
-      setTimeout(() => scrollToNext(currentIndex), 800);
+    if (results.length > 0) {
+      const currentIndex = articlesRef.current.findIndex(a => a.pageid === article.pageid);
+      if (currentIndex >= 0) {
+        setTimeout(() => scrollToNext(currentIndex), 400);
+      }
     }
-  }, [diveDeeper, scrollToNext, diveActive]);
+  }, [diveDeeper, scrollToNext, diveActive, boatBob]);
+
+  // Auto-load more dive articles when approaching end of feed during a dive
+  useEffect(() => {
+    if (!diveActive) return;
+    const remaining = articles.length - activeIndex;
+    if (remaining <= 3 && remaining > 0) {
+      loadMoreDiveArticles();
+    }
+  }, [activeIndex, articles.length, diveActive, loadMoreDiveArticles]);
 
   const renderItem = useCallback(
     ({ item, index }: { item: ProcessedArticle; index: number }) => (
@@ -190,8 +222,23 @@ export default function FeedScreen() {
         <Ionicons name="sparkles" size={22} color={ACCENT} />
       </TouchableOpacity>
 
-      {/* Dive deeper banner animation */}
-      {diveBanner ? (
+      {/* Dive loading — boat on the high seas animation */}
+      {diveLoading ? (
+        <Animated.View style={[styles.diveLoadingOverlay, { opacity: diveBannerOpacity }]}>
+          <View style={styles.diveLoadingContent}>
+            <Animated.View style={{ transform: [{ translateY: boatBob }] }}>
+              <Ionicons name="boat" size={64} color={ACCENT} />
+            </Animated.View>
+            <Text style={styles.diveLoadingWaves}>〰️ 🌊 〰️ 🌊 〰️</Text>
+            <Text style={styles.diveLoadingTitle}>{diveBanner || 'Diving...'}</Text>
+            <Text style={styles.diveLoadingSubtitle}>Charting related waters...</Text>
+            <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 16 }} />
+          </View>
+        </Animated.View>
+      ) : null}
+
+      {/* Dive deeper banner (shown briefly after articles load) */}
+      {diveBanner && !diveLoading ? (
         <Animated.View style={[styles.diveBanner, { opacity: diveBannerOpacity }]}>
           <Ionicons name="boat" size={20} color="#fff" style={{ marginRight: 8 }} />
           <Text style={styles.diveBannerText}>{diveBanner}</Text>
@@ -199,7 +246,7 @@ export default function FeedScreen() {
       ) : null}
 
       {/* Persistent dive counter when active */}
-      {diveActive && !diveBanner ? (
+      {diveActive && !diveBanner && !diveLoading ? (
         <View style={styles.diveActiveBar}>
           <Ionicons name="boat" size={16} color="#fff" style={{ marginRight: 6 }} />
           <Text style={styles.diveActiveText}>Deep Dive</Text>
@@ -450,6 +497,34 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '700',
+  },
+  diveLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  diveLoadingContent: {
+    alignItems: 'center',
+  },
+  diveLoadingWaves: {
+    fontSize: 24,
+    marginTop: 8,
+    letterSpacing: 4,
+  },
+  diveLoadingTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 20,
+    textAlign: 'center',
+    paddingHorizontal: 40,
+  },
+  diveLoadingSubtitle: {
+    color: '#9CA3AF',
+    fontSize: 14,
+    marginTop: 8,
   },
   staticBottomContent: {
     position: 'absolute',
