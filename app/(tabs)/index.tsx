@@ -19,6 +19,7 @@ import Card from '../../src/components/Card';
 import ThemeModal from '../../src/components/ThemeModal';
 import { ProcessedArticle } from '../../src/types';
 import { recordLike, loadWeights } from '../../src/lib/preferences';
+import { useIsFocused } from '@react-navigation/native';
 
 const ACCENT = '#38BDF8';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -43,6 +44,14 @@ export default function FeedScreen() {
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [themeModalVisible, setThemeModalVisible] = useState(false);
+  const isFocused = useIsFocused();
+
+  // Close modal when navigating away from Feed tab
+  useEffect(() => {
+    if (!isFocused && themeModalVisible) {
+      setThemeModalVisible(false);
+    }
+  }, [isFocused]);
   const [diveBanner, setDiveBanner] = useState<string | null>(null);
   const [diveActive, setDiveActive] = useState(false);
   const [diveCount, setDiveCount] = useState(0);
