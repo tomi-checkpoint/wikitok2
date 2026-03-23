@@ -35,6 +35,7 @@ export default function TodayScreen() {
   const articlesRef = useRef(articles);
   articlesRef.current = articles;
   const seenRef = useRef(new Set<number>());
+  const prefetchedUrls = useRef(new Set<string>()).current;
   const textFade = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -79,7 +80,10 @@ export default function TodayScreen() {
   useEffect(() => {
     for (let i = activeIndex + 1; i <= activeIndex + 3 && i < articles.length; i++) {
       const thumb = articles[i]?.thumbnail;
-      if (thumb) Image.prefetch(thumb).catch(() => {});
+      if (thumb && !prefetchedUrls.has(thumb)) {
+        prefetchedUrls.add(thumb);
+        Image.prefetch(thumb).catch(() => {});
+      }
     }
   }, [activeIndex, articles]);
 

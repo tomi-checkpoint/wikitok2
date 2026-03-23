@@ -10,7 +10,46 @@ const KEYS = {
   INTERACTIONS: 'wikitok_interactions',
 } as const;
 
-async function getJSON<T>(key: string, fallback: T): Promise<T> {
+// ── In-memory cache ──
+// All reads come from memory. Writes go to memory first, then persist in background.
+// This eliminates redundant disk reads and makes the hot path synchronous.
+
+interface StorageCache {
+  saved: ProcessedArticle[] | null;
+  history: ProcessedArticle[] | null;
+  seen: number[] | null;
+  disliked: number[] | null;
+  interests: UserInterest[] | null;
+  interactions: InteractionEvent[] | null;
+}
+
+const cache: StorageCache = {
+  saved: null,
+  history: null,
+  seen: null,
+  disliked: null,
+  interests: null,
+  interactions: null,
+};
+
+// Pending writes — debounced to avoid thrashing disk
+const pendingWrites = new Map<string, NodeJS.Timeout>();
+const WRITE_DEBOUNCE = 500; // ms
+
+function persistKey(key: string, data: any): void {
+  // Cancel any pending write for this key
+  const existing = pendingWrites.get(key);
+  if (existing) clearTimeout(existing);
+
+  // Schedule write
+  const timer = setTimeout(() => {
+    AsyncStorage.setItem(key, JSON.stringify(data)).catch(() => {});
+    pendingWrites.delete(key);
+  }, WRITE_DEBOUNCE);
+  pendingWrites.set(key, timer);
+}
+
+async function loadKey<T>(key: string, fallback: T): Promise<T> {
   try {
     const raw = await AsyncStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
@@ -19,79 +58,132 @@ async function getJSON<T>(key: string, fallback: T): Promise<T> {
   }
 }
 
-async function setJSON(key: string, value: unknown): Promise<void> {
-  await AsyncStorage.setItem(key, JSON.stringify(value));
+// ── Preload all keys into cache at startup ──
+export async function preloadCache(): Promise<void> {
+  const [saved, seen, disliked, history, interests, interactions] = await Promise.all([
+    loadKey<ProcessedArticle[]>(KEYS.SAVED, []),
+    loadKey<number[]>(KEYS.SEEN, []),
+    loadKey<number[]>(KEYS.DISLIKED, []),
+    loadKey<ProcessedArticle[]>(KEYS.HISTORY, []),
+    loadKey<UserInterest[]>(KEYS.INTERESTS, []),
+    loadKey<InteractionEvent[]>(KEYS.INTERACTIONS, []),
+  ]);
+  cache.saved = saved;
+  cache.seen = seen;
+  cache.disliked = disliked;
+  cache.history = history;
+  cache.interests = interests;
+  cache.interactions = interactions;
 }
 
-// Saved articles
+// ── Saved articles ──
 export async function getSaved(): Promise<ProcessedArticle[]> {
-  return getJSON(KEYS.SAVED, []);
+  if (cache.saved !== null) return cache.saved;
+  cache.saved = await loadKey(KEYS.SAVED, []);
+  return cache.saved;
 }
-export async function setSaved(articles: ProcessedArticle[]): Promise<void> {
-  await setJSON(KEYS.SAVED, articles);
-}
+
 export async function addSaved(article: ProcessedArticle): Promise<void> {
   const saved = await getSaved();
   if (!saved.find(a => a.pageid === article.pageid)) {
-    await setSaved([article, ...saved]);
+    const updated = [article, ...saved];
+    cache.saved = updated;
+    persistKey(KEYS.SAVED, updated);
   }
 }
+
 export async function removeSaved(pageid: number): Promise<void> {
   const saved = await getSaved();
-  await setSaved(saved.filter(a => a.pageid !== pageid));
+  const updated = saved.filter(a => a.pageid !== pageid);
+  cache.saved = updated;
+  persistKey(KEYS.SAVED, updated);
 }
 
-// Seen article IDs
+// ── Seen article IDs ──
 export async function getSeen(): Promise<number[]> {
-  return getJSON(KEYS.SEEN, []);
+  if (cache.seen !== null) return cache.seen;
+  cache.seen = await loadKey(KEYS.SEEN, []);
+  return cache.seen;
 }
+
 export async function addSeen(pageid: number): Promise<void> {
   const seen = await getSeen();
   if (!seen.includes(pageid)) {
     const updated = [pageid, ...seen].slice(0, 500);
-    await setJSON(KEYS.SEEN, updated);
+    cache.seen = updated;
+    persistKey(KEYS.SEEN, updated);
   }
 }
 
-// Disliked article IDs
+// ── Disliked article IDs ──
 export async function getDisliked(): Promise<number[]> {
-  return getJSON(KEYS.DISLIKED, []);
+  if (cache.disliked !== null) return cache.disliked;
+  cache.disliked = await loadKey(KEYS.DISLIKED, []);
+  return cache.disliked;
 }
+
 export async function addDisliked(pageid: number): Promise<void> {
   const disliked = await getDisliked();
   if (!disliked.includes(pageid)) {
-    await setJSON(KEYS.DISLIKED, [...disliked, pageid]);
+    const updated = [...disliked, pageid];
+    cache.disliked = updated;
+    persistKey(KEYS.DISLIKED, updated);
   }
 }
 
-// View history
+// ── View history ──
 export async function getHistory(): Promise<ProcessedArticle[]> {
-  return getJSON(KEYS.HISTORY, []);
+  if (cache.history !== null) return cache.history;
+  cache.history = await loadKey(KEYS.HISTORY, []);
+  return cache.history;
 }
+
 export async function addHistory(article: ProcessedArticle): Promise<void> {
   const history = await getHistory();
   const filtered = history.filter(a => a.pageid !== article.pageid);
-  await setJSON(KEYS.HISTORY, [article, ...filtered].slice(0, 100));
+  const updated = [article, ...filtered].slice(0, 100);
+  cache.history = updated;
+  persistKey(KEYS.HISTORY, updated);
 }
 
-// User interests (decaying weighted profile)
+// ── User interests (decaying weighted profile) ──
 export async function getInterests(): Promise<UserInterest[]> {
-  return getJSON(KEYS.INTERESTS, []);
-}
-export async function setInterests(interests: UserInterest[]): Promise<void> {
-  await setJSON(KEYS.INTERESTS, interests);
+  if (cache.interests !== null) return cache.interests;
+  cache.interests = await loadKey(KEYS.INTERESTS, []);
+  return cache.interests;
 }
 
-// Interaction events log
-export async function getInteractions(): Promise<InteractionEvent[]> {
-  return getJSON(KEYS.INTERACTIONS, []);
+export async function setInterests(interests: UserInterest[]): Promise<void> {
+  cache.interests = interests;
+  persistKey(KEYS.INTERESTS, interests);
 }
+
+// ── Interaction events log ──
+export async function getInteractions(): Promise<InteractionEvent[]> {
+  if (cache.interactions !== null) return cache.interactions;
+  cache.interactions = await loadKey(KEYS.INTERACTIONS, []);
+  return cache.interactions;
+}
+
 export async function addInteraction(event: InteractionEvent): Promise<void> {
   const events = await getInteractions();
-  await setJSON(KEYS.INTERACTIONS, [...events, event].slice(-1000));
+  const updated = [...events, event].slice(-1000);
+  cache.interactions = updated;
+  persistKey(KEYS.INTERACTIONS, updated);
 }
 
-// Clear all data
+// ── Clear all data ──
 export async function clearAll(): Promise<void> {
+  // Clear cache
+  cache.saved = [];
+  cache.history = [];
+  cache.seen = [];
+  cache.disliked = [];
+  cache.interests = [];
+  cache.interactions = [];
+  // Cancel pending writes
+  for (const timer of pendingWrites.values()) clearTimeout(timer);
+  pendingWrites.clear();
+  // Clear disk
   await AsyncStorage.multiRemove(Object.values(KEYS));
 }

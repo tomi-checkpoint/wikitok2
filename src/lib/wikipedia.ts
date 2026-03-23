@@ -3,118 +3,65 @@ import { WikiArticle } from '../types';
 const API_BASE = 'https://en.wikipedia.org/w/api.php';
 const REST_BASE = 'https://en.wikipedia.org/api/rest_v1';
 
-const BORING_PATTERNS = [
-  // Geographic boilerplate
-  /\bvillage\b.*\bdistrict\b/i,
-  /\bmunicipality\b.*\bcounty\b/i,
-  /\bcommune\b.*\bdepartment\b/i,
-  /\bcensus[- ]designated place\b/i,
-  /\bis a town in\b/i,
-  /\bis a city in\b/i,
-  /\bis a village in\b/i,
-  /\bis a hamlet in\b/i,
-  /\bis a settlement in\b/i,
-  /\bis a borough in\b/i,
-  /\bis a parish in\b/i,
-  /\bis a neighbourhood in\b/i,
-  /\bis a neighborhood in\b/i,
-  /\bis a locality in\b/i,
-  /\bis a suburb of\b/i,
-  /\bis a municipality in\b/i,
-  /\bis a barangay in\b/i,
-  /\bis a commune in\b/i,
-  /\bis a district of\b/i,
-  /\bis a province of\b/i,
-  /\bis a county in\b/i,
-  /\bis a township in\b/i,
-  /\bis a census-designated\b/i,
-  /\bis a small town\b/i,
-  /\bis an unincorporated community\b/i,
-  /\blocated in the\b.*\bregion of\b/i,
-  /\bwith a population of\b.*\baccording to\b/i,
+// ─── LRU Cache ──────────────────────────────────────────────
+const API_CACHE = new Map<string, { data: any; timestamp: number }>();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const MAX_CACHE_SIZE = 100;
 
-  // Sports boilerplate (minor figures)
-  /\bis a footballer\b/i,
-  /\bis a cricketer\b/i,
-  /\bis a\b.*\bfootball\b.*\bplayer\b/i,
-  /\bis a\b.*\bsoccer\b.*\bplayer\b/i,
-  /\bis a\b.*\brugby\b.*\bplayer\b/i,
-  /\bis a\b.*\bbaseball\b.*\bplayer\b/i,
-  /\bis a\b.*\bbasketball\b.*\bplayer\b/i,
-  /\bis a\b.*\bhockey\b.*\bplayer\b/i,
-  /\bis a\b.*\bhandballer\b/i,
-  /\bplays for\b.*\bin the\b/i,
-  /\bprofessional\b.*\bwho plays\b/i,
-  /\bwho currently plays\b/i,
-  /\bwho played for\b/i,
-  /\b\d{4}.*\bseason\b.*\bwas the\b/i,
-  /\bwas a.*league\b.*\bseason\b/i,
+function getCached(key: string): any | null {
+  const entry = API_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    API_CACHE.delete(key);
+    return null;
+  }
+  return entry.data;
+}
 
-  // Politics boilerplate
-  /\bpolitician who\b/i,
-  /\bis a member of the\b.*\bparliament\b/i,
-  /\bis a\b.*\bpolitician\b.*\bserving as\b/i,
-  /\bis a\b.*\bpolitician\b.*\bwho served\b/i,
-  /\bran for election\b/i,
-  /\belection\b.*\bresults\b/i,
-  /\bcensus\b.*\bpopulation\b/i,
-  /\belectoral district\b/i,
-  /\bconstituency\b/i,
-  /\blegislative assembly\b/i,
+function setCache(key: string, data: any): void {
+  if (API_CACHE.size >= MAX_CACHE_SIZE) {
+    // Delete oldest entry
+    const firstKey = API_CACHE.keys().next().value;
+    if (firstKey) API_CACHE.delete(firstKey);
+  }
+  API_CACHE.set(key, { data, timestamp: Date.now() });
+}
 
-  // Taxonomy / biology stubs
-  /\btaxonomy\b.*\bspecies\b/i,
-  /\bgenus of\b.*\bfamily\b/i,
-  /\bis a species of\b.*\bin the family\b/i,
-  /\bis a genus of\b/i,
-  /\bis a moth\b.*\bfamily\b/i,
-  /\bis a beetle\b.*\bfamily\b/i,
-  /\bis a fly\b.*\bfamily\b/i,
-  /\bis a\b.*\binsect\b.*\bfamily\b/i,
-  /\bis a\b.*\bsnail\b.*\bfamily\b/i,
-  /\bis a\b.*\blichen\b.*\bfamily\b/i,
-  /\bis a\b.*\bmoss\b.*\bfamily\b/i,
-  /\bis a\b.*\bplant\b.*\bin the family\b/i,
+// ─── Optimized Boring Filters ───────────────────────────────
+// Combined into fewer regex using alternation for better performance
 
-  // Wikipedia structural pages
-  /\bList of\b/i,
-  /\bIndex of\b/i,
-  /\bdisambiguation\b/i,
-  /\bmay refer to\b/i,
-  /\bcan refer to\b/i,
-  /\bthis article\b.*\bstub\b/i,
-  /\bstub\b.*\bYou can help\b/i,
-  /\bTimeline of\b/i,
-  /\bGlossary of\b/i,
-  /\bOutline of\b/i,
-  /\bBibliography of\b/i,
-  /\bComparison of\b/i,
+// Geographic boilerplate — combined "is a X in/of" patterns
+const BORING_GEO_IS_A = /\bis (?:a |an )?(?:town|city|village|hamlet|settlement|borough|parish|neighbourhood|neighborhood|locality|suburb|municipality|barangay|commune|district|province|county|township|census-designated|small town|unincorporated community) (?:in|of)\b/i;
+const BORING_GEO_CROSS = /(?:\bvillage\b.*\bdistrict\b|\bmunicipality\b.*\bcounty\b|\bcommune\b.*\bdepartment\b|\bcensus[- ]designated place\b|\blocated in the\b.*\bregion of\b|\bwith a population of\b.*\baccording to\b)/i;
 
-  // Academic / minor entries
-  /\bis a\b.*\bjournal\b.*\bpublished by\b/i,
-  /\bis a peer-reviewed\b/i,
-  /\bis a scientific name\b/i,
-  /\bis a highway in\b/i,
-  /\bis a road in\b/i,
-  /\bis a route in\b/i,
-  /\bis a station\b.*\bserved by\b/i,
-  /\bis a railway station\b/i,
-  /\bis a school in\b/i,
-  /\bis an elementary school\b/i,
-  /\bis a high school in\b/i,
+// Sports boilerplate
+const BORING_SPORTS = /(?:\bis a (?:footballer|cricketer)\b|\bis a\b.*\b(?:football|soccer|rugby|baseball|basketball|hockey)\b.*\bplayer\b|\bis a\b.*\bhandballer\b|\bplays for\b.*\bin the\b|\bprofessional\b.*\bwho plays\b|\bwho (?:currently )?play(?:s|ed) for\b|\b\d{4}.*\bseason\b.*\bwas the\b|\bwas a.*league\b.*\bseason\b)/i;
+
+// Politics boilerplate
+const BORING_POLITICS = /(?:\bpolitician who\b|\bis a member of the\b.*\bparliament\b|\bis a\b.*\bpolitician\b.*\b(?:serving as|who served)\b|\bran for election\b|\belection\b.*\bresults\b|\bcensus\b.*\bpopulation\b|\belectoral district\b|\bconstituency\b|\blegislative assembly\b)/i;
+
+// Taxonomy / biology stubs
+const BORING_TAXONOMY = /(?:\btaxonomy\b.*\bspecies\b|\bgenus of\b.*\bfamily\b|\bis a species of\b.*\bin the family\b|\bis a genus of\b|\bis a (?:moth|beetle|fly)\b.*\bfamily\b|\bis a\b.*\b(?:insect|snail|lichen|moss)\b.*\bfamily\b|\bis a\b.*\bplant\b.*\bin the family\b)/i;
+
+// Wikipedia structural pages
+const BORING_STRUCTURAL = /(?:\bList of\b|\bIndex of\b|\bdisambiguation\b|\bmay refer to\b|\bcan refer to\b|\bthis article\b.*\bstub\b|\bstub\b.*\bYou can help\b|\bTimeline of\b|\bGlossary of\b|\bOutline of\b|\bBibliography of\b|\bComparison of\b)/i;
+
+// Academic / minor entries
+const BORING_ACADEMIC = /(?:\bis a\b.*\bjournal\b.*\bpublished by\b|\bis a peer-reviewed\b|\bis a scientific name\b|\bis a (?:highway|road|route) in\b|\bis a (?:railway )?station\b.*\bserved by\b|\bis a (?:railway station|school|elementary school|high school)\b)/i;
+
+const BORING_COMBINED = [
+  BORING_GEO_IS_A,
+  BORING_GEO_CROSS,
+  BORING_SPORTS,
+  BORING_POLITICS,
+  BORING_TAXONOMY,
+  BORING_STRUCTURAL,
+  BORING_ACADEMIC,
 ];
 
 const BORING_TITLE_PATTERNS = [
-  /^List of /i,
-  /^Index of /i,
-  /^Outline of /i,
-  /^Timeline of /i,
-  /^Glossary of /i,
-  /^Bibliography of /i,
-  /^Comparison of /i,
-  /\(disambiguation\)/i,
-  /\(electoral district\)/i,
-  /\(constituency\)/i,
+  /^(?:List|Index|Outline|Timeline|Glossary|Bibliography|Comparison) of /i,
+  /\((?:disambiguation|electoral district|constituency)\)/i,
   /\(TV series\)$/i,
   /\(season \d+\)$/i,
   /^\d{4} in /i,           // "2023 in football"
@@ -122,18 +69,7 @@ const BORING_TITLE_PATTERNS = [
   /\belections?\b.*\d{4}/i, // "2020 election"
 ];
 
-const BORING_DESCRIPTION_PATTERNS = [
-  /\bstub\b/i,
-  /\bdisambiguation\b/i,
-  /\bWikimedia\b/i,
-  /\bredirect\b/i,
-  /\blist article\b/i,
-  /\btaxonomic\b/i,
-  /\bspecies of\b.*\binsect\b/i,
-  /\bspecies of\b.*\bplant\b/i,
-  /\bspecies of\b.*\bmollusk\b/i,
-  /\bspecies of\b.*\barachnid\b/i,
-];
+const BORING_DESCRIPTION_PATTERN = /\b(?:stub|disambiguation|Wikimedia|redirect|list article|taxonomic)\b|\bspecies of\b.*\b(?:insect|plant|mollusk|arachnid)\b/i;
 
 function isBoringArticle(article: WikiArticle): boolean {
   if (!article.extract || article.extract.length < 200) return true;
@@ -142,32 +78,41 @@ function isBoringArticle(article: WikiArticle): boolean {
   if (BORING_TITLE_PATTERNS.some(p => p.test(article.title))) return true;
 
   // Check description
-  if (article.description && BORING_DESCRIPTION_PATTERNS.some(p => p.test(article.description))) return true;
+  if (article.description && BORING_DESCRIPTION_PATTERN.test(article.description)) return true;
 
   // Check extract content
-  return BORING_PATTERNS.some(p => p.test(article.extract));
+  return BORING_COMBINED.some(p => p.test(article.extract));
 }
 
-// Rate limiting: max 2 concurrent requests, 200ms minimum gap
+// ─── Promise-Queue Rate Limiter ─────────────────────────────
 let activeRequests = 0;
-let lastRequestTime = 0;
-const MAX_CONCURRENT = 2;
-const MIN_GAP_MS = 200;
+const MAX_CONCURRENT = 3;
+const requestQueue: Array<() => void> = [];
+
+function acquireSlot(): Promise<void> {
+  if (activeRequests < MAX_CONCURRENT) {
+    activeRequests++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    requestQueue.push(() => { activeRequests++; resolve(); });
+  });
+}
+
+function releaseSlot(): void {
+  activeRequests--;
+  if (requestQueue.length > 0) {
+    const next = requestQueue.shift()!;
+    next();
+  }
+}
 
 async function fetchJSON(url: string, retries = 2): Promise<any> {
-  // Wait for slot
-  while (activeRequests >= MAX_CONCURRENT) {
-    await new Promise(r => setTimeout(r, 100));
-  }
-  // Enforce minimum gap
-  const now = Date.now();
-  const gap = now - lastRequestTime;
-  if (gap < MIN_GAP_MS) {
-    await new Promise(r => setTimeout(r, MIN_GAP_MS - gap));
-  }
+  // Check cache first
+  const cached = getCached(url);
+  if (cached !== null) return cached;
 
-  activeRequests++;
-  lastRequestTime = Date.now();
+  await acquireSlot();
   try {
     const res = await fetch(url, {
       headers: {
@@ -176,15 +121,17 @@ async function fetchJSON(url: string, retries = 2): Promise<any> {
     });
     if (res.status === 429 && retries > 0) {
       // Rate limited — exponential backoff
-      activeRequests--;
+      releaseSlot();
       const delay = (3 - retries) * 2000;
       await new Promise(r => setTimeout(r, delay));
       return fetchJSON(url, retries - 1);
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+    const data = await res.json();
+    setCache(url, data);
+    return data;
   } finally {
-    activeRequests--;
+    releaseSlot();
   }
 }
 
@@ -211,7 +158,7 @@ async function getExtracts(titles: string[]): Promise<WikiArticle[]> {
       exintro: '1',
       explaintext: '1',
       piprop: 'thumbnail',
-      pithumbsize: '800',
+      pithumbsize: '640',
       pilimit: String(batchSize),
       cllimit: '10',
     });
@@ -306,7 +253,7 @@ export async function searchArticles(query: string, limit: number = 10): Promise
     exintro: '1',
     explaintext: '1',
     piprop: 'thumbnail',
-    pithumbsize: '800',
+    pithumbsize: '640',
     pilimit: '20',
     cllimit: '10',
   });

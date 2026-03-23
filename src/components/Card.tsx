@@ -62,7 +62,7 @@ export default React.memo(function Card({ article, isActive }: CardProps) {
       </View>
     </View>
   );
-});
+}, (prev, next) => prev.article.pageid === next.article.pageid);
 
 const styles = StyleSheet.create({
   container: {

@@ -60,6 +60,7 @@ export default function FeedScreen() {
   const articlesRef = useRef(articles);
   articlesRef.current = articles;
   const seenRef = useRef(new Set<number>());
+  const prefetchedUrls = useRef(new Set<string>()).current;
 
   // Load preference weights on mount
   useEffect(() => { loadWeights(); }, []);
@@ -88,11 +89,12 @@ export default function FeedScreen() {
     Animated.timing(textFade, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, [activeIndex]);
 
-  // Prefetch next few images
+  // Prefetch next few images (deduped to avoid redundant network requests)
   useEffect(() => {
     for (let i = activeIndex + 1; i <= activeIndex + 3 && i < articles.length; i++) {
       const thumb = articles[i]?.thumbnail;
-      if (thumb) {
+      if (thumb && !prefetchedUrls.has(thumb)) {
+        prefetchedUrls.add(thumb);
         Image.prefetch(thumb).catch(() => {});
       }
     }

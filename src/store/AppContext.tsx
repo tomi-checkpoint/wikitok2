@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ProcessedArticle, FeedConfig, TabName } from '../types';
 import * as Storage from '../lib/storage';
 import { buildFeed, recordInteraction } from '../lib/algorithm';
@@ -49,9 +49,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loadingRef = useRef(false);
   const articleIdsRef = useRef(new Set<number>());
 
-  // Load persisted state on mount
+  // Load persisted state on mount — preload cache first for fast reads
   useEffect(() => {
     (async () => {
+      await Storage.preloadCache();
       const [saved, history, disliked] = await Promise.all([
         Storage.getSaved(),
         Storage.getHistory(),
@@ -82,7 +83,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       setState(s => ({
         ...s,
-        articles: [...s.articles, ...newArticles],
+        articles: s.articles.concat(newArticles),
         loading: false,
       }));
     } catch (err) {
@@ -192,7 +193,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (processed.length > 0) {
         setState(s => ({
           ...s,
-          articles: [...s.articles, ...processed],
+          articles: s.articles.concat(processed),
         }));
       }
     } catch (err) {
@@ -200,26 +201,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Memoize context value to prevent all consumers re-rendering on every state change
+  const contextValue = useMemo(() => ({
+    ...state,
+    loadMore,
+    saveArticle,
+    unsaveArticle,
+    dislikeArticle,
+    addToHistory,
+    viewArticle,
+    closeViewer,
+    setActiveTab,
+    setFeedConfig,
+    recordDwell,
+    shareArticle,
+    isSaved,
+    resetFeed,
+    diveDeeper,
+  }), [state, loadMore, saveArticle, unsaveArticle, dislikeArticle, addToHistory, viewArticle, closeViewer, setActiveTab, setFeedConfig, recordDwell, shareArticle, isSaved, resetFeed, diveDeeper]);
+
   return (
-    <AppContext.Provider
-      value={{
-        ...state,
-        loadMore,
-        saveArticle,
-        unsaveArticle,
-        dislikeArticle,
-        addToHistory,
-        viewArticle,
-        closeViewer,
-        setActiveTab,
-        setFeedConfig,
-        recordDwell,
-        shareArticle,
-        isSaved,
-        resetFeed,
-        diveDeeper,
-      }}
-    >
+    <AppContext.Provider value={contextValue}>
       {children}
     </AppContext.Provider>
   );

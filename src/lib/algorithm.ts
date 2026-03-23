@@ -25,25 +25,28 @@ import {
   addSeen,
 } from './storage';
 
+// ─── Memoized Title Normalization ───────────────────────────
+const titleNormCache = new Map<string, string>();
+function normalizeTitle(title: string): string {
+  let cached = titleNormCache.get(title);
+  if (cached !== undefined) return cached;
+  cached = title.toLowerCase().replace(/\s*\(.*?\)\s*/g, '').replace(/[^a-z0-9]/g, '');
+  if (titleNormCache.size > 500) titleNormCache.clear();
+  titleNormCache.set(title, cached);
+  return cached;
+}
+
 // ─── Hook Generator ─────────────────────────────────────────
 // Extracts the most compelling lines from an article extract
+// Pre-compiled combined regex patterns for hook scoring
 
-const HOOK_PATTERNS = [
-  /\d{1,3}(?:,\d{3})*(?:\.\d+)?/, // numbers
-  /\b(?:first|oldest|largest|smallest|fastest|deadliest|longest|shortest|tallest|rarest|most|least|only|unique|record)\b/i,
-  /\b(?:discovered|invented|created|founded|built|destroyed|killed|survived|escaped|won|lost|defeated)\b/i,
-  /\b(?:secret|mystery|unknown|ancient|forbidden|legendary|mythical|cursed|haunted|impossible)\b/i,
-  /\b\d{3,4}\s*(?:AD|BC|BCE|CE)\b/i,
-  /\b(?:million|billion|trillion|thousand)\b/i,
-  /\b(?:war|battle|revolution|empire|kingdom|dynasty|civilization)\b/i,
-  /\b(?:paradox|theory|phenomenon|anomaly|miracle)\b/i,
-];
+const HOOK_NUMBERS = /\d{1,3}(?:,\d{3})*(?:\.\d+)?|\b\d{3,4}\s*(?:AD|BC|BCE|CE)\b|\b(?:million|billion|trillion|thousand)\b/i;
+const HOOK_DRAMATIC = /\b(?:first|oldest|largest|smallest|fastest|deadliest|longest|shortest|tallest|rarest|most|least|only|unique|record|discovered|invented|created|founded|built|destroyed|killed|survived|escaped|won|lost|defeated|secret|mystery|unknown|ancient|forbidden|legendary|mythical|cursed|haunted|impossible|war|battle|revolution|empire|kingdom|dynasty|civilization|paradox|theory|phenomenon|anomaly|miracle)\b/i;
 
 function scoreHookLine(line: string): number {
   let score = 0;
-  for (const pattern of HOOK_PATTERNS) {
-    if (pattern.test(line)) score += 2;
-  }
+  if (HOOK_NUMBERS.test(line)) score += 2;
+  if (HOOK_DRAMATIC.test(line)) score += 2;
   // Prefer medium-length sentences
   const words = line.split(/\s+/).length;
   if (words >= 8 && words <= 25) score += 3;
@@ -84,26 +87,8 @@ function generateHooks(extract: string): string[] {
 // Scores article quality based on content features
 // Stricter scoring: only truly interesting articles should pass
 
-// Keywords that signal an article is likely interesting/amazing
-const INTERESTING_KEYWORDS = [
-  /\b(?:discover(?:ed|y)|invent(?:ed|ion)|created?|founded?)\b/i,
-  /\b(?:first|oldest|largest|smallest|fastest|deadliest|tallest|rarest|longest|shortest)\b/i,
-  /\b(?:ancient|mysterious|legendary|mythical|famous|notorious|iconic|renowned)\b/i,
-  /\b(?:revolution(?:ary)?|groundbreaking|pioneering|unprecedented)\b/i,
-  /\b(?:record[- ]breaking|world record|guinness)\b/i,
-  /\b(?:secret|forbidden|unknown|unexplained|enigma|paradox)\b/i,
-  /\b(?:billion|million|trillion)\b/i,
-  /\b(?:empire|dynasty|civilization|kingdom)\b/i,
-  /\b(?:extinct|endangered|surviving|preserved)\b/i,
-  /\b(?:conspiracy|scandal|controversy|infamous)\b/i,
-  /\b(?:masterpiece|landmark|monument|treasure)\b/i,
-  /\b(?:genius|prodigy|visionary|polymath)\b/i,
-  /\b(?:catastrophe|disaster|plague|epidemic|pandemic)\b/i,
-  /\b(?:assassination|coup|uprising|rebellion|mutiny)\b/i,
-  /\b(?:expedition|exploration|voyage|quest)\b/i,
-  /\b(?:miracle|phenomenon|anomaly|wonder)\b/i,
-  /\b(?:Nobel Prize|Academy Award|Pulitzer|Grammy)\b/i,
-];
+// Single combined regex for interesting keywords — single pass instead of 16 separate tests
+const INTERESTING_PATTERN = /\b(?:discover(?:ed|y)|invent(?:ed|ion)|created?|founded?|first|oldest|largest|smallest|fastest|deadliest|tallest|rarest|longest|shortest|ancient|mysterious|legendary|mythical|famous|notorious|iconic|renowned|revolution(?:ary)?|groundbreaking|pioneering|unprecedented|record[- ]breaking|world record|guinness|secret|forbidden|unknown|unexplained|enigma|paradox|billion|million|trillion|empire|dynasty|civilization|kingdom|extinct|endangered|surviving|preserved|conspiracy|scandal|controversy|infamous|masterpiece|landmark|monument|treasure|genius|prodigy|visionary|polymath|catastrophe|disaster|plague|epidemic|pandemic|assassination|coup|uprising|rebellion|mutiny|expedition|exploration|voyage|quest|miracle|phenomenon|anomaly|wonder|Nobel Prize|Academy Award|Pulitzer|Grammy)\b/i;
 
 function scoreContentQuality(article: WikiArticle): number {
   let score = 40; // base score — most articles should pass
@@ -137,11 +122,9 @@ function scoreContentQuality(article: WikiArticle): number {
   else if (sentences.length >= 3) score += 4;
   else score -= 5;
 
-  // ── Interesting keyword bonus ──
-  let keywordHits = 0;
-  for (const pattern of INTERESTING_KEYWORDS) {
-    if (pattern.test(extract)) keywordHits++;
-  }
+  // ── Interesting keyword bonus — single regex, count all matches ──
+  const matches = extract.match(new RegExp(INTERESTING_PATTERN.source, 'gi'));
+  const keywordHits = matches ? Math.min(new Set(matches.map(m => m.toLowerCase())).size, 16) : 0;
   // Reward articles that match multiple "interesting" signals
   score += Math.min(keywordHits * 4, 20);
 
@@ -329,7 +312,7 @@ async function getSerendipitousArticles(
       exintro: '1',
       explaintext: '1',
       piprop: 'thumbnail',
-      pithumbsize: '800',
+      pithumbsize: '640',
       format: 'json',
       origin: '*',
     })}`;
@@ -453,8 +436,6 @@ export async function buildFeed(
   count: number = 10
 ): Promise<ProcessedArticle[]> {
   const seenTitles = new Set<string>();
-  const normalizeTitle = (title: string) =>
-    title.toLowerCase().replace(/\s*\(.*?\)\s*/g, '').replace(/[^a-z0-9]/g, '');
 
   const isFiltered = (a: WikiArticle) => {
     if (existingIds.has(a.pageid)) return true;
@@ -533,31 +514,22 @@ export async function buildFeed(
     await Promise.all(feedPromises);
   }
 
-  // ── Score-based ranking with diversity ──
+  // ── Single-pass deduplication by pageid and normalized title ──
+  const seen = new Map<number, ProcessedArticle>();
+  const dedupTitles = new Set<string>();
 
-  // Deduplicate by page ID (keep highest score)
-  const uniqueMap = new Map<number, ProcessedArticle>();
   for (const c of candidates) {
-    const existing = uniqueMap.get(c.pageid);
-    if (!existing || c.score > existing.score) {
-      uniqueMap.set(c.pageid, c);
+    const normTitle = normalizeTitle(c.title);
+    if (seen.has(c.pageid)) {
+      const existing = seen.get(c.pageid)!;
+      if (c.score > existing.score) seen.set(c.pageid, c);
+      continue;
     }
+    if (dedupTitles.has(normTitle)) continue;
+    seen.set(c.pageid, c);
+    dedupTitles.add(normTitle);
   }
-
-  // Deduplicate by normalized title to avoid similar content
-  // e.g., "Battle of Gettysburg" and "Battle of Gettysburg (1863)" are too similar
-  const titleMap = new Map<string, ProcessedArticle>();
-  for (const c of Array.from(uniqueMap.values())) {
-    const normalizedTitle = c.title
-      .toLowerCase()
-      .replace(/\s*\(.*?\)\s*/g, '')  // strip parentheticals
-      .replace(/[^a-z0-9]/g, '');      // strip punctuation/spaces
-    const existing = titleMap.get(normalizedTitle);
-    if (!existing || c.score > existing.score) {
-      titleMap.set(normalizedTitle, c);
-    }
-  }
-  candidates = Array.from(titleMap.values());
+  candidates = Array.from(seen.values());
 
   // ── Minimum quality threshold ──
   // Don't surface articles below this score — they aren't "amazing" enough
