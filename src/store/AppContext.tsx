@@ -73,7 +73,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // Race feed build against a 15-second timeout to avoid hanging
-      const feedPromise = buildFeed(state.feedConfig, articleIdsRef.current, 5);
+      const feedPromise = buildFeed(state.feedConfig, articleIdsRef.current, 8);
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Feed load timeout')), 25000)
       );
